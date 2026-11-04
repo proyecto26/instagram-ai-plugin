@@ -1,0 +1,36 @@
+node_modules/
+test/node_modules/
+dist/
+
+# Session data never belongs in the repo (the CLI stores it outside the repo by default)
+cookies.json
+cookies.txt
+*.cookie
+runtime-config.json
+graphql-docids.json
+actions.jsonl
+pending/
+chrome-profile/
+
+# Outputs and local test media
+instagram-audit.json
+instagram-profile.json
+instagram-swipe.json
+outputs/
+test/fixtures/live/
+.env
+.env.*
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Claude state
+.claude/
+.remember/
+
+# claude plugin eval output
+evals/results/

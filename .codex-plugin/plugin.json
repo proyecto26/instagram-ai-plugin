@@ -1,0 +1,38 @@
+{
+  "name": "instagram-ai-plugin",
+  "version": "0.1.0",
+  "description": "Drive your own Instagram account from the terminal with your browser session (no Graph API app, no Apify): sign in with cookies; read profiles, posts, comments and hashtags; publish photos, carousels and reels as approved dry runs; and run content, audit, competitor research and ads workflows on real account data.",
+  "author": {
+    "name": "Proyecto 26",
+    "url": "https://github.com/proyecto26"
+  },
+  "homepage": "https://github.com/proyecto26/instagram-ai-plugin",
+  "repository": "https://github.com/proyecto26/instagram-ai-plugin",
+  "license": "MIT",
+  "keywords": [
+    "instagram",
+    "reels",
+    "carousel",
+    "social-media",
+    "marketing",
+    "content",
+    "audit",
+    "analytics",
+    "meta-ads",
+    "cookies"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Instagram",
+    "shortDescription": "Publish, read and analyze your Instagram account with your browser session",
+    "longDescription": "Sign in to Instagram with your own browser cookies and use the same endpoints instagram.com uses: read profiles, posts, reels, comments and hashtags; publish photos, carousels and reels after an approved dry run; write and lint captions, hooks and reel scripts; audit an account against its own median; build a swipe file from competitors; and plan Instagram ad campaigns.",
+    "developerName": "Proyecto 26",
+    "category": "Productivity",
+    "websiteURL": "https://github.com/proyecto26/instagram-ai-plugin",
+    "defaultPrompt": [
+      "Audit my Instagram account and tell me what to post more of",
+      "Write a caption for this reel and lint it",
+      "Post this carousel to Instagram (show me the dry run first)"
+    ]
+  }
+}

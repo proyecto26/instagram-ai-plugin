@@ -1,0 +1,24 @@
+{
+  "name": "instagram-ai-plugin",
+  "version": "0.1.0",
+  "description": "Drive your own Instagram account from the terminal with your browser session (no Graph API app, no Apify): sign in with cookies; read profiles, posts, comments and hashtags; publish photos, carousels and reels as approved dry runs; and run content, audit, competitor research and ads workflows on real account data.",
+  "author": {
+    "name": "Proyecto 26",
+    "url": "https://github.com/proyecto26"
+  },
+  "homepage": "https://github.com/proyecto26/instagram-ai-plugin",
+  "repository": "https://github.com/proyecto26/instagram-ai-plugin",
+  "license": "MIT",
+  "keywords": [
+    "instagram",
+    "reels",
+    "carousel",
+    "social-media",
+    "marketing",
+    "content",
+    "audit",
+    "analytics",
+    "meta-ads",
+    "cookies"
+  ]
+}

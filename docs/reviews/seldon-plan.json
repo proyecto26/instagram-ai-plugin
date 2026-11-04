@@ -1,0 +1,103 @@
+{
+  "verdict": "request_major_revision",
+  "summary": "Inline review: the plugin structure and source reuse fit the workspace, but API feasibility, credential protection, and live-write validation need substantive changes. Instagram endpoint evidence was accepted as supplied; no authenticated Instagram requests were made.",
+  "confidence": 0.88,
+  "strengths": [
+    "Manifest layout, self-contained TypeScript scripts, and Bun invocation match the reference plugins.",
+    "Named source scripts exist, and the Jake Schincariol/Corey Haines MIT attributions check out.",
+    "Dry-run defaults, explicit publishing approval, missing-metric labels, and separation from Ads Manager are sensible."
+  ],
+  "blocking_findings": [
+    {
+      "severity": "high",
+      "title": "0600 does not provide Windows credential isolation",
+      "why": "Define and verify Windows ACL protection for cookies and the persistent Chrome profile. Logout must specify whether it removes both; deleting cookies.json alone leaves reusable browser credentials.",
+      "evidence": "The plan promises 0600 under APPDATA. The NotebookLM reference writes plaintext and explicitly ignores chmod failures on Windows. Node documents that owner/group permission distinctions are unsupported there: [filesystem documentation](https://nodejs.org/api/fs.html#file-modes).",
+      "refs": [
+        "instagram-ai-plugin/docs/PLAN.md:46",
+        "instagram-ai-plugin/docs/PLAN.md:73",
+        "../notebooklm-ai-plugin/skills/notebooklm/scripts/cookie-store.ts:154",
+        "../notebooklm-ai-plugin/skills/notebooklm/scripts/paths.ts:33"
+      ]
+    },
+    {
+      "severity": "high",
+      "title": "REST fallbacks do not resolve the demonstrated read failures",
+      "why": "Core reads underpin audit and research, but the plan supplies no working transport for several of them. Specify GraphQL operation discovery, variables, pagination, response parsing, and explicit unsupported-operation behavior before building dependent skills.",
+      "evidence": "The supplied probes report 404s, 429s, and non-JSON responses, and acknowledge rotating GraphQL doc_ids. Nevertheless, endpoints.ts is defined exclusively as REST paths/hosts. A mobile API hostname is not automatically interchangeable with a browser-cookie request.",
+      "refs": [
+        "instagram-ai-plugin/docs/PLAN.md:32",
+        "instagram-ai-plugin/docs/PLAN.md:48",
+        "instagram-ai-plugin/docs/PLAN.md:89",
+        "instagram-ai-plugin/docs/PLAN.md:95"
+      ]
+    },
+    {
+      "severity": "high",
+      "title": "Mutation contracts remain unestablished",
+      "why": "Endpoint strings cannot establish working publications. Define numeric timestamp-style upload_ids, distinct entity names, photo source/dimension fields, ordered children_metadata and sidecar flags, and separate story photo/video bodies. Delete and comment/reply also need verified web contracts; mobile routes and modern web GraphQL mutations cannot be substituted blindly.",
+      "evidence": "Only clips fields are enumerated; photo, carousel, story, delete, and comment bodies are absent. [Photo/story source](https://github.com/subzeroid/instagrapi/blob/master/instagrapi/mixins/photo.py) and [sidecar source](https://github.com/subzeroid/instagrapi/blob/master/instagrapi/mixins/album.py) illustrate the distinct contracts, but are mobile implementations, not verification of this web flow.",
+      "refs": [
+        "instagram-ai-plugin/docs/PLAN.md:14",
+        "instagram-ai-plugin/docs/PLAN.md:26",
+        "instagram-ai-plugin/docs/PLAN.md:51",
+        "instagram-ai-plugin/docs/PLAN.md:64",
+        "instagram-ai-plugin/docs/PLAN.md:115"
+      ]
+    },
+    {
+      "severity": "high",
+      "title": "Live-test privacy and write recovery are not established",
+      "why": "Do not assume archive_only makes a photo test invisible. Use an explicitly approved test account, bind approval to account/media, verify resulting visibility and deletion, and retain recovery identifiers. Bound transcode polling and reconcile ambiguous configure timeouts before retrying to prevent duplicates.",
+      "evidence": "archive_only was observed only among clips fields, yet the live test applies it to a photo. The sole publication test cannot validate carousel, reel, story, or comment behavior; no timeout/reconciliation or failed-cleanup acceptance criteria are defined. The explicit first-write approval requirement is good but does not resolve these risks.",
+      "refs": [
+        "instagram-ai-plugin/docs/PLAN.md:28",
+        "instagram-ai-plugin/docs/PLAN.md:51",
+        "instagram-ai-plugin/docs/PLAN.md:118",
+        "instagram-ai-plugin/docs/PLAN.md:128"
+      ]
+    }
+  ],
+  "non_blocking_findings": [
+    {
+      "severity": "medium",
+      "title": "Account-stop and credential-boundary rules need executable tests",
+      "why": "Resolve 429 backoff versus immediate stop. Test that probes/fallbacks stop on challenges, dry runs send zero mutations, secrets are redacted, and authenticated requests cannot follow arbitrary input URLs or redirects.",
+      "evidence": "The plan specifies both 429 backoff and immediate termination, and both exact-request previews and never printing cookies. It omits explicit X-IG-WWW-Claim refresh, required cookie validation, and host-scoping rules.",
+      "refs": [
+        "instagram-ai-plugin/docs/PLAN.md:47",
+        "instagram-ai-plugin/docs/PLAN.md:59",
+        "instagram-ai-plugin/docs/PLAN.md:68",
+        "instagram-ai-plugin/docs/PLAN.md:73",
+        "instagram-ai-plugin/docs/PLAN.md:114"
+      ]
+    },
+    {
+      "severity": "medium",
+      "title": "Validation limits need reconciliation",
+      "why": "The 30-hashtag allowance conflicts with the supplied marketing reference's five-hashtag limit. Distinguish conservative CLI restrictions from verified endpoint limits, and cover story geometry, carousel cropping, byte limits, and video codecs; MP4 dimensions/duration alone do not establish compatibility.",
+      "evidence": "Validation lists feed aspect ratios and reel duration but omits story-specific rules and codec checks. The supplied platform-limits reference explicitly lists five hashtags.",
+      "refs": [
+        "instagram-ai-plugin/docs/PLAN.md:49",
+        "instagram-ai-plugin/docs/PLAN.md:70",
+        "examples/marketingskills/skills/social/references/platform-limits.md:11"
+      ]
+    },
+    {
+      "severity": "low",
+      "title": "Type-checking and Windows execution prerequisites are incomplete",
+      "why": "Declare development-only TypeScript tooling/typings and smoke-test quoted Windows paths and invocation outside the repository directory. Bun supports Windows, but executing TypeScript does not supply the proposed tsc check.",
+      "evidence": "npx and Git Bash are available locally; bun and tsc are absent from PATH. npx can supply Bun, but no TypeScript development setup is planned. [Bun installation documentation](https://bun.sh/docs/installation) confirms Windows support.",
+      "refs": [
+        "instagram-ai-plugin/docs/PLAN.md:6",
+        "instagram-ai-plugin/docs/PLAN.md:85",
+        "instagram-ai-plugin/docs/PLAN.md:114"
+      ]
+    }
+  ],
+  "open_questions": [
+    "Can sanitized request/response fixtures establish web-specific headers, payload encodings, and pagination without retaining cookies or account identifiers?",
+    "Which capabilities must be proven before release, and which will remain explicitly experimental until approved live tests pass?",
+    "Are posting-hour recommendations intended as descriptive correlations? Sample size, timezone, and uncertainty are currently unspecified."
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "name": "instagram-ai-plugin-marketplace",
+  "interface": {
+    "displayName": "Instagram"
+  },
+  "plugins": [
+    {
+      "name": "instagram-ai-plugin",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

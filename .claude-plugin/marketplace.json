@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "instagram-ai-plugin",
+  "description": "Drive your own Instagram account with your browser session, plus content, audit, research and ads skills",
+  "owner": {
+    "name": "Proyecto 26",
+    "email": "jdnichollsc@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "instagram-ai-plugin",
+      "description": "Drive your own Instagram account from the terminal with your browser session (no Graph API app, no Apify): sign in with cookies; read profiles, posts, comments and hashtags; publish photos, carousels and reels as approved dry runs; and run content, audit, competitor research and ads workflows on real account data.",
+      "version": "0.1.0",
+      "source": "./"
+    }
+  ]
+}

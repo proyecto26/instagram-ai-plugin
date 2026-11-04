@@ -1,0 +1,65 @@
+{
+  "verdict": "approve",
+  "summary": "Inline round 9 review: the round 8 pagination blocker is resolved, and the seven historical safeguards remain resolved. No new material defect was reproduced. TypeScript validation and offline synthetic checks passed; no live Instagram calls were made.",
+  "confidence": 0.91,
+  "prior_blockers": [
+    {
+      "title": "Post pagination can issue unbounded authenticated requests without making progress",
+      "status": "resolved",
+      "evidence": "REST and GraphQL pagination use Pager, which stops on empty pages, repeated cursors and a request budget (instagram-ai-plugin/skills/instagram/scripts/read.ts:73, read.ts:104, read.ts:119, read.ts:126, read.ts:167, read.ts:172). Offline reproductions for both paths stopped after 1, 2 and 3 page requests respectively."
+    },
+    {
+      "title": "HTML account-stop responses below HTTP 500 still erase pending protection",
+      "status": "resolved",
+      "evidence": "Non-JSON errors omit body, while pending clearance requires a definitive JSON answer below HTTP 500 (instagram-ai-plugin/skills/instagram/scripts/client.ts:287; instagram-ai-plugin/skills/instagram/scripts/publish.ts:460). Offline HTTP 200, 403 and 404 challenge responses retained pending protection and blocked subsequent publishing."
+    },
+    {
+      "title": "A 5xx transcode-shaped response triggers automatic configure retries",
+      "status": "resolved",
+      "evidence": "Configure retries require transcode_pending, a JSON body and HTTP status below 500 (instagram-ai-plugin/skills/instagram/scripts/publish.ts:385). An offline video-plan reproduction with HTTP 502 and status=in_progress made one configure request and retained pending protection."
+    },
+    {
+      "title": "HTML feedback and wait signals still allow authenticated fallback",
+      "status": "resolved",
+      "evidence": "Both HTML handling paths classify feedback and wait signals before fallback (instagram-ai-plugin/skills/instagram/scripts/client.ts:261, client.ts:278). Offline checks with both expectJson settings stopped after the first request."
+    },
+    {
+      "title": "Recursive Chrome-profile isolation still fails open",
+      "status": "resolved",
+      "evidence": "Nonempty-profile reset failures and recursive ACL inspection failures return failure (instagram-ai-plugin/skills/instagram/scripts/secure.ts:88, secure.ts:103). Authentication requires recursive isolation before launching Chrome (instagram-ai-plugin/skills/instagram/scripts/auth.ts:240). Native ACL mutation was not exercised."
+    },
+    {
+      "title": "Overlapping manual unlocks can delete an active publisher's lock",
+      "status": "resolved",
+      "evidence": "Claims use unique filenames, exclusive creation and owner-specific release; stale cleanup skips potentially live owners (instagram-ai-plugin/skills/instagram/scripts/pending.ts:97, pending.ts:99, pending.ts:101, pending.ts:129). Offline mocked-filesystem checks confirmed competing acquisition fails and unlock preserves the active claim."
+    },
+    {
+      "title": "Non-JSON response classification permits unsafe fallback and clears ambiguous publishes",
+      "status": "resolved",
+      "evidence": "Account markers precede non-JSON not_found classification, and publish recovery requires JSON evidence before clearing rejected operations (instagram-ai-plugin/skills/instagram/scripts/client.ts:274; instagram-ai-plugin/skills/instagram/scripts/publish.ts:460). Offline HTML checks stopped fallback and retained ambiguous publishes."
+    },
+    {
+      "title": "Explicit false confirmation flags execute mutations",
+      "status": "resolved",
+      "evidence": "False/0 assignments remove boolean switches; unsupported values throw (instagram-ai-plugin/skills/instagram/scripts/main.ts:92). Offline subprocess checks across all eight write commands confirmed --confirm=false performs a dry run with zero fetches."
+    }
+  ],
+  "strengths": [
+    "Authenticated requests enforce HTTPS and an Instagram hostname allowlist, disable redirects, and reject unsafe origin overrides. GraphQL bundle requests attach no cookies (instagram-ai-plugin/skills/instagram/scripts/client.ts:214, client.ts:236; instagram-ai-plugin/skills/instagram/scripts/constants.ts:27; instagram-ai-plugin/skills/instagram/scripts/graphql.ts:85). Offline host-refusal checks passed.",
+    "All current write contracts require --experimental after --confirm. Dry-run branches precede client creation. Twenty-four offline subprocess checks covered normal dry runs, false confirmation switches and experimental gates across photo, carousel, reel, story, edit-caption, delete, comment and reply, with zero fetches (instagram-ai-plugin/skills/instagram/scripts/main.ts:130, main.ts:140, main.ts:145, main.ts:354, main.ts:358; instagram-ai-plugin/skills/instagram/scripts/publish.ts:23).",
+    "Cookie replacement secures an empty temporary file before writing credentials. Storage errors throw unless the explicit insecure-storage override is enabled; a mocked ACL failure prevented credential writes (instagram-ai-plugin/skills/instagram/scripts/cookie-store.ts:120, cookie-store.ts:126; instagram-ai-plugin/skills/instagram/scripts/secure.ts:113, secure.ts:118).",
+    "Default publish recovery preserves uncertainty through locking, write-ahead records and fail-closed ledger reads. HTML, 5xx and missing-media-ID responses retained protection in offline checks. Candidate matching does not automatically resolve records. The documented --ignore-pending switch remains an explicit escape hatch (instagram-ai-plugin/skills/instagram/scripts/pending.ts:95, pending.ts:143, pending.ts:151; instagram-ai-plugin/skills/instagram/scripts/publish.ts:443, publish.ts:450, publish.ts:476; instagram-ai-plugin/skills/instagram/scripts/main.ts:383).",
+    "Automatic configure retries are limited to explicit JSON transcode-pending responses below HTTP 500 for video plans, with ten attempts total. Delete/comment fallback requires HTTP 404; other ambiguous mutation responses stop (instagram-ai-plugin/skills/instagram/scripts/publish.ts:374, publish.ts:385; instagram-ai-plugin/skills/instagram/scripts/client.ts:317).",
+    "Recognized account-stop signals propagate through endpoint fallback, GraphQL errors, probe and research. No like, follow or DM commands exist. Research caps accounts and posts, and authenticated requests default to 1500 ms pacing, configurable through the environment (instagram-ai-plugin/skills/instagram/scripts/client.ts:111; instagram-ai-plugin/skills/instagram/scripts/graphql.ts:143; instagram-ai-plugin/skills/instagram/scripts/main.ts:246, main.ts:307, main.ts:313, main.ts:316; instagram-ai-plugin/skills/instagram/scripts/constants.ts:54).",
+    "Normal session displays and publish descriptions redact session credentials; the synthetic credential markers did not appear in tested dry-run output (instagram-ai-plugin/skills/instagram/scripts/cookie-store.ts:177; instagram-ai-plugin/skills/instagram/scripts/main.ts:221; instagram-ai-plugin/skills/instagram/scripts/publish.ts:313)."
+  ],
+  "blocking_findings": [],
+  "non_blocking_findings": [],
+  "open_questions": [
+    "No live Instagram calls were made. Payload acceptance, restriction-page recognition and whether transcode-pending always proves no publish occurred remain unverified. Every current write contract retains its experimental gate.",
+    "Bun was unavailable on PATH. The full unit suite was not run because it creates filesystem fixtures in this read-only environment. TypeScript --noEmit passed; runtime checks used Node TypeScript transformation, synthetic credentials and mocked filesystem/network operations.",
+    "Native Windows ACL enforcement and Chrome-profile reuse were not exercised. Source inspection and mocked failures cannot independently confirm the PLAN's manual Windows verification claim.",
+    "Malformed-cookie diagnostics remain unverified under Bun. JSON parsing errors still flow into diagnostic output without explicit sanitization (instagram-ai-plugin/skills/instagram/scripts/cookie-store.ts:61, cookie-store.ts:112; instagram-ai-plugin/skills/instagram/scripts/main.ts:404, main.ts:407).",
+    "Before promoting contracts to verified-live, the existing live acceptance limitations remain relevant: reads only assert an array, and deletion verification checks absence from six feed results without establishing completeness (instagram-ai-plugin/test/live.test.ts:38, live.test.ts:71, live.test.ts:72)."
+  ]
+}

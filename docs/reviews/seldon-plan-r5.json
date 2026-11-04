@@ -1,0 +1,88 @@
+{
+  "verdict": "request_major_revision",
+  "summary": "The cookie replacement and transcode-count findings are resolved. Account-stop handling and publish exclusion remain incomplete: offline reproductions confirmed requests after challenge/login pages and a second publish after an unresolved first publish. Reused Windows Chrome profiles also lack descendant ACL verification. Type-checking passed; no live Instagram calls were made.",
+  "confidence": 0.94,
+  "prior_blockers": [
+    {
+      "title": "Partial GraphQL responses and HTML discovery pages still bypass account-stop handling",
+      "status": "partially",
+      "evidence": "GraphQL now classifies account signals even with partial data (instagram-ai-plugin/skills/instagram/scripts/graphql.ts:131, graphql.ts:143), and successful HTML challenge responses stop (client.ts:250). However, non-success HTML responses are classified before challenge inspection (client.ts:249), and HTML discovery does not detect login pages. Offline getPosts reproductions continued with an authenticated profile request after both a 403 challenge page and a 200 login page (read.ts:127, read.ts:132)."
+    },
+    {
+      "title": "Existing Windows cookie files receive credentials before their own permissions are secured",
+      "status": "resolved",
+      "evidence": "Replacement now exclusively creates an empty temporary file, restricts it before writing credentials, and renames it over the destination (instagram-ai-plugin/skills/instagram/scripts/cookie-store.ts:124, cookie-store.ts:126, cookie-store.ts:127, cookie-store.ts:128, cookie-store.ts:129). Offline mocks confirmed no credential bytes were written when temporary-file isolation failed."
+    },
+    {
+      "title": "Overlapping publishes bypass the pending ledger's duplicate protection",
+      "status": "partially",
+      "evidence": "executePlan acquires an exclusive lock before checking the ledger (instagram-ai-plugin/skills/instagram/scripts/publish.ts:428, publish.ts:440). Ordinary overlap is excluded, but stale-lock recovery deletes the pathname without verifying that it still represents the observed dead owner (pending.ts:82, pending.ts:86, pending.ts:87). An offline execution reproduced two lock acquisitions and two configure calls, with the second succeeding after the first became unresolved."
+    },
+    {
+      "title": "The previously reported transcode attempt-count discrepancy remains",
+      "status": "resolved",
+      "evidence": "The retry condition now permits nine retries after the initial configure request (instagram-ai-plugin/skills/instagram/scripts/publish.ts:374, publish.ts:384). An offline mock counted exactly 10 configure calls for persistent video transcode_pending responses; photo transcode_pending responses received one call."
+    }
+  ],
+  "strengths": [
+    "Authenticated HTTP requests require HTTPS and an allowlisted Instagram hostname, with redirects disabled. Origin overrides remain restricted to Instagram, and bundle fetches supply no cookies (instagram-ai-plugin/skills/instagram/scripts/client.ts:204, client.ts:226; constants.ts:27; graphql.ts:85).",
+    "Tested photo, carousel, story, edit-caption, delete, comment and reply dry runs made zero network calls. Confirmed commands lacking experimental opt-in were refused before client creation; every write contract remains unverified or observed-in-bundle (instagram-ai-plugin/skills/instagram/scripts/main.ts:124, main.ts:133, main.ts:138, main.ts:347, main.ts:351; publish.ts:23).",
+    "Dry-run authentication headers and status cookies are redacted. Offline checks found no dummy session or CSRF values in those outputs (instagram-ai-plugin/skills/instagram/scripts/publish.ts:313; cookie-store.ts:177; main.ts:214).",
+    "Ordinary ambiguous configure results preserve pending state without replay. Offline checks observed one configure call for missing-media-id responses and network/server failures. Automatic retries require explicit transcode_pending and video content (instagram-ai-plugin/skills/instagram/scripts/publish.ts:384, publish.ts:459, publish.ts:468).",
+    "Mutation fallback requires HTTP 404; corrupt or unreadable pending state blocks publishing, and candidate matching never automatically resolves it (instagram-ai-plugin/skills/instagram/scripts/client.ts:297; pending.ts:103, pending.ts:111; publish.ts:408, publish.ts:441).",
+    "The CLI exposes no like, follow or DM commands, caps swipe research at 12 accounts and 50 posts each, and defaults to 1.5-second authenticated request pacing (instagram-ai-plugin/skills/instagram/scripts/main.ts:300, main.ts:306; constants.ts:54; client.ts:101).",
+    "TypeScript validation passed with --noEmit over scripts and tests. The live-test preload preserves real session sources when INSTAGRAM_LIVE=1 (instagram-ai-plugin/test/unit/setup.ts:8)."
+  ],
+  "blocking_findings": [
+    {
+      "severity": "medium",
+      "title": "HTML discovery can still continue after explicit account-stop signals",
+      "why": "The operation makes further authenticated requests after Instagram presents a challenge or login page, violating the stop-on-account-signals contract.",
+      "evidence": "With expectJson:false, HTTP failure classification precedes challenge inspection, so a 403 challenge page becomes bad_request. A 200 loginForm page is returned unchanged. getPosts catches the resulting discovery errors and fetches the profile again. Both continuations were reproduced offline with mocked responses.",
+      "files": [
+        "instagram-ai-plugin/skills/instagram/scripts/client.ts:247",
+        "instagram-ai-plugin/skills/instagram/scripts/client.ts:249",
+        "instagram-ai-plugin/skills/instagram/scripts/client.ts:250",
+        "instagram-ai-plugin/skills/instagram/scripts/graphql.ts:73",
+        "instagram-ai-plugin/skills/instagram/scripts/read.ts:127",
+        "instagram-ai-plugin/skills/instagram/scripts/read.ts:132"
+      ]
+    },
+    {
+      "severity": "medium",
+      "title": "Concurrent stale-lock recovery defeats publish exclusion",
+      "why": "After a process dies, overlapping recovery invocations can both enter the publish critical section and bypass unresolved-publish protection.",
+      "evidence": "Two contenders can read the same dead owner. One removes the stale lock and acquires a replacement; the other's delayed rm then deletes that replacement and permits another acquisition. Release also removes the pathname without ownership verification. An offline executePlan reproduction produced two configure calls: the first failed ambiguously and remained pending, while the second subsequently succeeded without ignorePending or resolution.",
+      "files": [
+        "instagram-ai-plugin/skills/instagram/scripts/pending.ts:74",
+        "instagram-ai-plugin/skills/instagram/scripts/pending.ts:76",
+        "instagram-ai-plugin/skills/instagram/scripts/pending.ts:82",
+        "instagram-ai-plugin/skills/instagram/scripts/pending.ts:86",
+        "instagram-ai-plugin/skills/instagram/scripts/pending.ts:87",
+        "instagram-ai-plugin/skills/instagram/scripts/publish.ts:440",
+        "instagram-ai-plugin/skills/instagram/scripts/publish.ts:448"
+      ]
+    },
+    {
+      "severity": "medium",
+      "title": "Reused Windows Chrome profiles retain explicit permissions on descendants",
+      "why": "A reused profile containing explicitly shared child files can remain readable by other principals while Chrome writes session/profile data. Restricting only the profile directory does not establish the plan's promised isolation of the existing profile.",
+      "evidence": "Authentication secures the data directory and profile directory, then launches Chrome against that profile. secure.ts enumerates and removes principals only on the supplied target; it neither examines existing descendants nor replaces the existing profile. Explicit grants on a child such as Default/Network/Cookies therefore remain outside verification. This finding is source-based; native Windows profile reuse was not exercised.",
+      "files": [
+        "instagram-ai-plugin/skills/instagram/scripts/auth.ts:238",
+        "instagram-ai-plugin/skills/instagram/scripts/auth.ts:239",
+        "instagram-ai-plugin/skills/instagram/scripts/auth.ts:243",
+        "instagram-ai-plugin/skills/instagram/scripts/auth.ts:247",
+        "instagram-ai-plugin/skills/instagram/scripts/secure.ts:68",
+        "instagram-ai-plugin/skills/instagram/scripts/secure.ts:71",
+        "instagram-ai-plugin/skills/instagram/scripts/secure.ts:74"
+      ]
+    }
+  ],
+  "non_blocking_findings": [],
+  "open_questions": [
+    "No live Instagram calls were made or can be made in this review. Mutation payload acceptance, server-side transcode semantics and actual deletion behavior remain unverified; retaining experimental gates is appropriate.",
+    "The full Bun suite was not executed: Bun was unavailable on PATH, and the suite creates filesystem fixtures. Runtime checks used Node with TypeScript transformation and in-memory filesystem/network mocks; native Windows ACL operations and Chrome launch were not tested.",
+    "Which sanitized fixtures establish GraphQL response-root selection and pagination? The live read test still accepts an empty posts array and does not assert GraphQL use or pagination (instagram-ai-plugin/skills/instagram/scripts/graphql.ts:186; instagram-ai-plugin/test/live.test.ts:36, live.test.ts:38)."
+  ]
+}
