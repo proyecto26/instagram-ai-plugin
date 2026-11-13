@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude_Code-Plugin-blueviolet)](https://code.claude.com/docs/en/plugins)
 [![Agent Plugins](https://img.shields.io/badge/Agent_Plugins-1.0-orange)](https://agent-plugins.org/specification)
-[![Skills](https://img.shields.io/badge/Skills-6-brightgreen)](#-the-essentials-kit-features)
+[![Skills](https://img.shields.io/badge/Skills-7-brightgreen)](#-the-essentials-kit-features)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Bun-blue)](https://bun.sh)
 
 <img src="https://github.com/proyecto26/sherlock-ai-plugin/blob/main/images/claude-mascot-jumping-animated.svg" width="150">
@@ -103,7 +103,9 @@ Use a test account first. You are responsible for how you use your account.
 - Node.js (for `npx`). Bun is fetched on demand by `npx -y bun`, with zero npm dependencies.
 - Google Chrome, Chromium or Edge for `login`, or an exported cookie file.
 - ffmpeg: optional for the `instagram` skill (PNG/WebP conversion, reel cover frames); required, with
-  ffprobe, by `instagram-video-breakdown`.
+  ffprobe, by `instagram-video-breakdown` and `instagram-video-remake`.
+- For `instagram-video-remake` only: a local ComfyUI with MiniMax H3 (about 45 GB of models, a GPU
+  with 24 GB or more). `doctor` lists what is missing; nothing is downloaded without asking.
 
 ### Standards
 
@@ -241,7 +243,8 @@ instagram-ai-plugin/
 │   ├── instagram-audit/         # Account audit
 │   ├── instagram-research/      # Competitor swipe files
 │   ├── instagram-ads/           # Meta Ads decisions
-│   └── instagram-video-breakdown/ # Reel -> shots, script, remake plan (scripts/, needs ffmpeg)
+│   ├── instagram-video-breakdown/ # Reel -> shots, script, remake plan (scripts/, needs ffmpeg)
+│   └── instagram-video-remake/    # Replace a person in a video with a local model (scripts/, assets/)
 ├── evals/                       # `claude plugin eval .` suite
 ├── test/                        # Offline unit tests and opt-in live tests
 └── scripts/check-manifests.sh   # Checks the manifests agree before a release

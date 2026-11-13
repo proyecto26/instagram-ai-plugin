@@ -1,5 +1,21 @@
 # Third-party notices
 
+## comfy-openjutsu and H3 Character Swap
+
+Source: https://github.com/Comfy-Org/comfy-openjutsu (MIT, Copyright (c) 2026 Comfy Org), built on
+Akatz Labs' H3 Character Swap workflow, https://github.com/akatz-labs/h3-character-swap-tool
+(workflow MIT, Copyright (c) 2026 Akatz Labs).
+Used in: `skills/instagram-video-remake/assets/workflows/h3_swap.api.json`, copied unmodified from
+`workflows/swap.api.json`; the full MIT text is in the `NOTICE.md` next to it. The way
+`skills/instagram-video-remake/scripts/graphs.ts` fills that graph follows the upstream app's
+`lib/swap.ts`; the code was written for this plugin.
+
+The graph uses node classes from the `h3_character_swap` node pack of the same Akatz Labs
+repository, which is GPL-3.0. That pack is NOT included in this repository and no code from it was
+copied: users install it in their own ComfyUI. Model weights (MiniMax H3 Community License, SAM
+License, Apache-2.0) are not included either; `skills/instagram-video-remake/references/setup.md`
+lists them with their sources.
+
 ## marketingskills
 
 Source: https://github.com/coreyhaines31/marketingskills

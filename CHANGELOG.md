@@ -3,6 +3,13 @@
 
 ## Unreleased
 
+- New skill `instagram-video-remake`: replace one person in a video you may remake, keeping the
+  performance, the scene and everyone else, with MiniMax H3 in a local ComfyUI. Commands: `doctor`,
+  `init` (requires a consent statement), `swap` (whole frame, or a crop around a small subject,
+  with a point to pick the person and an optional reversed pass), `continue` (extends a shot,
+  anchored on its last frames), `place`, `approve`, `assemble`, `audio` (source sound, or a longer
+  recording placed by waveform matching; never looped), `compare`, `status`. Everything is
+  recorded in `remake.json` (`ig.remake.v1`). Nothing is published and nothing leaves the computer.
 - instagram: reels publish through the "comet async" request the web composer uses (`scripts/comet.ts`),
   after the plain form started answering HTTP 200 with an empty body. The publish step repeats only on an
   explicit "still processing" answer, and an unclear answer stays in the pending ledger. Verified live
