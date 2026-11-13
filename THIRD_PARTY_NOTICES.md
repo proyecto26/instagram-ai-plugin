@@ -67,3 +67,12 @@ SOFTWARE.
 
 `skills/instagram/scripts/auth.ts` adapts the Chrome DevTools login helpers (free port, Chrome
 discovery, CDP connection). Same author (Proyecto 26), MIT.
+
+## rea-video
+
+Source: https://github.com/JuneYaooo/rea-video (Apache-2.0)
+Used in: `skills/instagram-video-breakdown`, as a design reference only. No code was copied and
+the project is not a dependency. Ideas taken from it: measure first and let an image-capable
+agent review per-shot evidence, validate the review answers before merging them, the shot-type
+taxonomy with confusable pairs, keeping the overlay layer separate from the base picture,
+on-demand extra frames, gated tempo estimation, and reporting "unconfirmed" instead of guessing.

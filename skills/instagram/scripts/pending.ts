@@ -20,6 +20,8 @@ export interface PendingOp {
     startedAt: string;
     state: 'configuring' | 'unresolved';
     error?: string;
+    /** What each publish attempt answered: HTTP status, body size, state, a short sanitized body. */
+    attempts?: Array<Record<string, unknown>>;
 }
 
 function dir(): string {
@@ -33,8 +35,8 @@ export async function beginPending(op: Omit<PendingOp, 'state' | 'startedAt'>): 
     return rec;
 }
 
-export async function markUnresolved(op: PendingOp, error: string): Promise<void> {
-    await writeFile(path.join(dir(), `${op.id}.json`), `${JSON.stringify({ ...op, state: 'unresolved', error }, null, 2)}\n`);
+export async function markUnresolved(op: PendingOp, error: string, attempts?: Array<Record<string, unknown>>): Promise<void> {
+    await writeFile(path.join(dir(), `${op.id}.json`), `${JSON.stringify({ ...op, state: 'unresolved', error, ...(attempts?.length ? { attempts } : {}) }, null, 2)}\n`);
 }
 
 export async function clearPending(id: string): Promise<boolean> {

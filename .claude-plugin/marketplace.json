@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "instagram-ai-plugin",
-      "description": "Drive your own Instagram account from the terminal with your browser session (no Graph API app, no Apify): sign in with cookies; read profiles, posts, comments and hashtags; publish photos, carousels, reels and stories, and comment and reply, as approved dry runs; and run content, audit, competitor research and ads workflows on real account data.",
+      "description": "Drive your own Instagram account from the terminal with your browser session (no Graph API app, no Apify): sign in with cookies; read profiles, posts, comments and hashtags; publish photos, carousels, reels and stories, and comment and reply, as approved dry runs; run content, audit, competitor research and ads workflows on real account data; and break down any reel into shots, script and a plan to make your own version.",
       "version": "0.1.0",
       "source": "./"
     }

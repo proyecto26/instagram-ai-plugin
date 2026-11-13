@@ -1,5 +1,26 @@
 # Changelog
 
+
+## Unreleased
+
+- instagram: reels publish through the "comet async" request the web composer uses (`scripts/comet.ts`),
+  after the plain form started answering HTTP 200 with an empty body. The publish step repeats only on an
+  explicit "still processing" answer, and an unclear answer stays in the pending ledger. Verified live
+  on 2026-11-13.
+- instagram: `post reel --tag`, `--collab`, `--ai-label`, `post story --mention` and `--ai-label`
+  (experimental; recipients must be approved with the `--approve` string the dry run prints).
+
+## Unreleased (2026-11-11)
+
+- New skill `instagram-video-breakdown`: `fetch` (one reel, story or carousel video through the
+  session, or `--file`), `analyze` (cuts from ffmpeg's scene score plus frame-difference spikes,
+  per-shot first/last frames, sheets and 2 fps strips, a low-motion hint, text-change candidates,
+  loudness, gated tempo and cuts-on-beat), `frames`, `transcribe` (import `.srt`/`.vtt`/JSON or
+  run your own recogniser; a Whisper recipe is included, no model is bundled or downloaded),
+  `review` / `apply-review` (validated answers; script only from a transcript; voice and music
+  stay unconfirmed without evidence) and `summary` (writes `recreate.md`). Needs ffmpeg.
+- Media downloads go to Instagram's CDN hosts only, over https, without cookies.
+
 ## Unreleased (2026-11-04)
 
 Verified on a real account: photo, carousel, reel, story (photo and video), comment and reply.
