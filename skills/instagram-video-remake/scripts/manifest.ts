@@ -33,6 +33,14 @@ export interface Attempt {
     output?: string;
     outputSha256?: string;
     frames?: number;
+    /**
+     * Frames of the stretch sent to the model (indices from its first frame, in playing order), when the stretch is
+     * 24 fps material carried at a higher rate: only its distinct frames are sent, at 24 fps, and `place` repeats
+     * them where the source repeats them. Absent: every frame was sent and the model resampled to 24 fps.
+     */
+    keep?: number[];
+    /** How the generated frames line up with the frames sent (shift in frames; 0 is right), measured on the picture. */
+    alignment?: { shift: number; error: number; errorAtZero: number };
 }
 
 export interface Shot {
@@ -50,7 +58,7 @@ export interface Shot {
     /** Attempt chosen for the timeline. */
     selected?: number;
     /** The selected attempt fitted to the source frame (file relative to the run folder) and how. */
-    placed?: { file: string; sha256: string; area?: Rect; feather?: number; fromAttempt: number };
+    placed?: { file: string; sha256: string; area?: Rect; feather?: number; fromAttempt: number; cadence?: { extraRepeats: number; longestRun: number } };
     /** A person looked at the placed shot in motion and accepted it. Bound to that exact file. */
     approved?: { at: string; sha256: string; note?: string };
 }
@@ -58,7 +66,21 @@ export interface Shot {
 export interface Manifest {
     schema: typeof SCHEMA;
     createdAt: string;
-    source: { file: string; sha256: string; width: number; height: number; fps: number; duration: number; hasAudio: boolean };
+    source: {
+        file: string;
+        sha256: string;
+        width: number;
+        height: number;
+        fps: number;
+        duration: number;
+        hasAudio: boolean;
+        /** Exact frame count, and the frames where a new shot starts (measured, or set by hand with `scenes --set`). */
+        frames?: number;
+        cuts?: number[];
+        cutsBy?: 'measured' | 'hand';
+        /** Every frame sits on the constant-rate grid (checked once; frame numbers and times agree). */
+        evenTiming?: boolean;
+    };
     /** The user's own statement that the people shown agreed and that they may use the source. Required. */
     consent: { statement: string; at: string };
     references: Reference[];

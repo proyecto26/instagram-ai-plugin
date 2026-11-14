@@ -37,6 +37,8 @@ export interface Probe {
     hasAudio: boolean;
     /** Length of the audio stream itself, in seconds (0 when there is none). */
     audioDuration: number;
+    /** The frames are not evenly spaced (nominal and average rates differ, or the count does not match the length). */
+    variableRate: boolean;
 }
 
 export function parseRate(r: string | undefined): number {
@@ -58,7 +60,9 @@ export async function probe(file: string): Promise<Probe> {
     const duration = Math.min(...[Number(v.duration), Number(j.format?.duration)].filter((n) => n > 0));
     const frames = Number(v.nb_read_frames) || Math.round(duration * fps);
     const a = (j.streams ?? []).find((s: any) => s.codec_type === 'audio');
-    return { width, height, fps, duration, frames, hasAudio: Boolean(a), audioDuration: a ? Number(a.duration) || 0 : 0 };
+    const nominal = parseRate(v.r_frame_rate);
+    const variableRate = (nominal > 0 && Math.abs(nominal - fps) / fps > 0.005) || Math.abs(frames - duration * fps) > 1.5;
+    return { width, height, fps, duration, frames, hasAudio: Boolean(a), audioDuration: a ? Number(a.duration) || 0 : 0, variableRate };
 }
 
 const ENC = ['-c:v', 'libx264', '-preset', 'medium', '-crf', '12', '-pix_fmt', 'yuv420p'];
@@ -77,17 +81,129 @@ export function checkRect(r: Rect, frame: { width: number; height: number }): vo
  * Cuts [start, start+duration) from `src`, optionally cropped and optionally played backwards. Audio is kept
  * (reversed too) because the model uses it as a timing guide.
  */
-export async function cut(src: string, out: string, o: { start: number; duration: number; fps: number; crop?: Rect; reverse?: boolean; hasAudio: boolean }): Promise<void> {
+export async function cut(src: string, out: string, o: { start: number; duration: number; fps: number; crop?: Rect; reverse?: boolean; hasAudio: boolean; keep?: number[]; keepFps?: number }): Promise<void> {
     // Whole frames only: the stretch is snapped to the frame grid and counted, so it can never run one frame into
     // the next shot (which, played backwards, would put that other shot on the first frame the model sees).
     const g = frameSpan(o.start, o.duration, o.fps);
+    // `keep`: only these frames of the stretch (its distinct frames), played at `keepFps`. The model then receives
+    // every real frame instead of resampling repeats in and real frames out.
+    let pick: string[] = [];
+    if (o.keep) {
+        const keep = new Set(o.keep);
+        const drop = Array.from({ length: g.frames }, (_, i) => i).filter((i) => !keep.has(i));
+        if (drop.length) pick = [`select='not(${drop.map((i) => `eq(n\\,${i})`).join('+')})'`];
+        pick.push(`setpts=N/${(o.keepFps ?? 24).toFixed(5)}/TB`);
+    }
     // The frames are counted INSIDE the filter chain, before `reverse`: that filter reads its whole input first,
     // so limiting the output alone would reverse everything up to the end of the file.
-    const vf = [`trim=end_frame=${g.frames}`, 'setpts=PTS-STARTPTS', o.crop ? cropFilter(o.crop) : null, o.reverse ? 'reverse' : null].filter(Boolean).join(',');
+    const vf = [`trim=end_frame=${g.frames}`, 'setpts=PTS-STARTPTS', ...pick, o.crop ? cropFilter(o.crop) : null, o.reverse ? 'reverse' : null].filter(Boolean).join(',');
     const args = ['-ss', g.seek.toFixed(5), '-t', (g.duration + 1).toFixed(5), '-i', src, '-vf', vf];
+    if (o.keep) args.push('-r', (o.keepFps ?? 24).toFixed(5), '-fps_mode', 'cfr');
     if (o.hasAudio) args.push('-af', [`atrim=duration=${g.duration.toFixed(5)}`, 'asetpts=PTS-STARTPTS', o.reverse ? 'areverse' : null].filter(Boolean).join(','), '-c:a', 'aac', '-b:a', '192k');
     else args.push('-an');
     await ffmpeg([...args, ...ENC, out], 'cutting the clip');
+}
+
+/**
+ * How many frames are NOT on a constant `fps` grid (more than a third of a frame away from first + i / fps, in
+ * presentation order). Average rates can hide a few dropped or doubled frames; their timestamps cannot.
+ */
+export async function unevenFrames(file: string, fps: number): Promise<number> {
+    const r = await run('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'packet=pts_time', '-of', 'csv=p=0', file]);
+    if (r.code !== 0) throw new ToolError(`ffprobe could not read ${file}: ${r.stderr.trim().slice(-200)}`);
+    const pts = r.stdout.toString().split(/\r?\n/).map((l) => Number.parseFloat(l)).filter((n) => Number.isFinite(n)).sort((a, b) => a - b);
+    return countUneven(pts, fps);
+}
+
+export function countUneven(pts: number[], fps: number): number {
+    if (!pts.length || !(fps > 0)) return 0;
+    let bad = 0;
+    for (let i = 0; i < pts.length; i++) if (Math.abs(pts[i] - pts[0] - i / fps) > 1 / (3 * fps)) bad++;
+    return bad;
+}
+
+/**
+ * Differences between consecutive frames (mean absolute difference of small grayscale frames, 0-255), for the whole
+ * file or `frames` frames from frame `first`, optionally inside `area` only. Entry i compares frame i with i+1.
+ */
+export async function frameDiffs(file: string, o: { fps: number; first?: number; frames?: number; area?: Rect; width?: number } = { fps: 30 }): Promise<Float32Array> {
+    const w = o.width ?? 96;
+    const pre: string[] = [];
+    if (o.first !== undefined) pre.push('-ss', Math.max(0, (o.first - 0.5) / o.fps).toFixed(5));
+    const chain = [o.frames !== undefined ? `trim=end_frame=${o.frames}` : null, o.area ? cropFilter(o.area) : null, `scale=${w}:-2:flags=area`, 'format=gray'].filter(Boolean).join(',');
+    const sized = await run('ffmpeg', ['-hide_banner', '-loglevel', 'error', ...pre, '-i', file, '-vf', chain, '-frames:v', '1', '-f', 'rawvideo', '-']);
+    if (sized.code !== 0 || !sized.stdout.length) throw new ToolError(`Could not read frames from ${file}: ${sized.stderr.trim().slice(-200)}`);
+    const size = sized.stdout.length;
+    const r = await run('ffmpeg', ['-hide_banner', '-loglevel', 'error', ...pre, '-i', file, '-vf', chain, '-fps_mode', 'passthrough', '-f', 'rawvideo', '-']);
+    if (r.code !== 0) throw new ToolError(`Could not read frames from ${file}: ${r.stderr.trim().slice(-200)}`);
+    const n = Math.floor(r.stdout.length / size);
+    const out = new Float32Array(Math.max(0, n - 1));
+    for (let i = 0; i + 1 < n; i++) {
+        let sum = 0;
+        const a = i * size;
+        const b = a + size;
+        for (let k = 0; k < size; k++) sum += Math.abs(r.stdout[a + k] - r.stdout[b + k]);
+        out[i] = sum / size;
+    }
+    return out;
+}
+
+async function smallFrames(file: string, w = 64): Promise<Uint8Array[]> {
+    const vf = `scale=${w}:${Math.round((w * 16) / 9 / 2) * 2},format=gray`;
+    const r = await run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-i', file, '-vf', vf, '-fps_mode', 'passthrough', '-f', 'rawvideo', '-']);
+    if (r.code !== 0) throw new ToolError(`Could not read frames from ${file}: ${r.stderr.trim().slice(-200)}`);
+    const size = w * Math.round((w * 16) / 9 / 2) * 2;
+    const out: Uint8Array[] = [];
+    for (let i = 0; i + size <= r.stdout.length; i += size) out.push(r.stdout.subarray(i, i + size));
+    return out;
+}
+
+/**
+ * Which frame of the clip sent to the model each generated frame lines up with: the shift (in frames, -3..3)
+ * that makes the two most alike, with the error at that shift and at no shift. Outside the replaced person the
+ * model keeps the picture it was given, so a whole-clip shift shows clearly there. `sentReversed`: the clip sent
+ * plays backwards relative to `generated`.
+ */
+export async function frameAlignment(generated: string, sent: string, sentReversed: boolean): Promise<{ shift: number; error: number; errorAtZero: number }> {
+    const g = await smallFrames(generated);
+    let s = await smallFrames(sent);
+    if (sentReversed) s = s.reverse();
+    const err = (shift: number) => {
+        let sum = 0;
+        let n = 0;
+        for (let k = 0; k < g.length; k++) {
+            const j = k + shift;
+            if (j < 0 || j >= s.length) continue;
+            let d = 0;
+            for (let p = 0; p < g[k].length; p++) d += Math.abs(g[k][p] - s[j][p]);
+            sum += d / g[k].length;
+            n++;
+        }
+        return n ? sum / n : Number.POSITIVE_INFINITY;
+    };
+    let best = { shift: 0, error: err(0) };
+    for (const shift of [-3, -2, -1, 1, 2, 3]) {
+        const e = err(shift);
+        if (e < best.error) best = { shift, error: e };
+    }
+    return { ...best, errorAtZero: err(0) };
+}
+
+/**
+ * Turns a generated clip into exactly `map.length` frames at `fps`, output frame j showing generated frame map[j].
+ * Used to give a generated shot the source's own rhythm of repeated frames. `work` is an empty scratch folder.
+ */
+export async function retime(generated: string, out: string, map: number[], fps: number, work: string): Promise<void> {
+    await ffmpeg(['-i', generated, '-fps_mode', 'passthrough', '-start_number', '0', `${work}/g%05d.png`], 'reading the generated frames');
+    const { copyFile, link } = await import('node:fs/promises');
+    const pad = (k: number) => String(k).padStart(5, '0');
+    // One numbered image per output frame, read back at exactly `fps`: no durations to round.
+    for (let j = 0; j < map.length; j++) {
+        const from = `${work}/g${pad(map[j])}.png`;
+        const to = `${work}/o${pad(j)}.png`;
+        await link(from, to).catch(() => copyFile(from, to));
+    }
+    await ffmpeg(['-framerate', fps.toFixed(5), '-start_number', '0', '-i', `${work}/o%05d.png`, '-frames:v', String(map.length), '-an', ...ENC, out], 'retiming the generated clip');
 }
 
 /** The stretch [start, start+duration) as whole frames: first frame index, frame count, and where to seek. */

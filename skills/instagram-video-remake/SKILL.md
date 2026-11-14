@@ -47,10 +47,16 @@ measured timings and the failures behind each rule. In short:
 1. **Break the source down** with the `instagram-video-breakdown` skill (shots, who appears,
    where). Decide per shot: keep as is, swap, or continue.
 2. **`init`** the run folder with the source, ONE identity photo and the consent statement.
-   Use the same photo for every shot; identity drifts when references change.
+   Use the same photo for every shot; identity drifts when references change. `init` measures
+   the cuts of the source to the frame; `scenes <run>` lists the shots as frame ranges. Check them
+   against the breakdown (and fix them with `scenes --set` if a flash or a fast move was taken
+   for a cut): every stretch is planned on these, not on approximate times.
 3. **Write the prompt** from `references/prompts.md`: the same character card in every shot,
    plus that shot's framing, light and "keep the performance and everyone else".
-4. **`swap`** each shot where the person appears. One stretch per run, up to 10 s.
+4. **`swap`** each shot where the person appears, as `--scene <n>` (cut to cut; add `--start` to
+   begin later, it still ends on the cut). One stretch per run, up to 10 s. A stretch that crosses
+   a cut, or stops or starts within 8 frames of one, is refused: those frames would show the
+   original person for an instant at the cut.
    - Close or medium shot, person alone or clearly the largest: `--tier 768`, default detection.
    - Other people in frame: add `--point x,y` on the person, in source-frame pixels.
    - Small or distant person: `--crop w:h:x:y` around them (9:16, about 2-3x their height),
@@ -60,13 +66,17 @@ measured timings and the failures behind each rule. In short:
    Each run prints the first frame the model sees. Look at it: the point must be on the person.
 5. **`place`** each shot: a cropped shot is blended back inside its own area (outside it the
    picture is the original); a full-frame shot is fitted to the frame. The placed clip has exactly
-   as many frames as the stretch it replaces. Then WATCH `placed.mp4` in motion.
+   as many frames as the stretch it replaces, repeating frames where the source repeats them; it
+   reports `cadence` (frames that stand still while the source moves). Then WATCH `placed.mp4` in motion.
 6. **`approve`** what is good. Re-run `swap` with one thing changed for what is not (a new
    attempt; nothing is overwritten). `references/troubleshooting.md` maps each defect to a change.
 7. **`continue`** when the user wants the shot to go on (the shot must be approved first):
    describe the movement in order, in the same tempo words as the shot; the last 25 frames of the
    shot are anchored automatically.
-8. **`assemble`** the timeline from stretches of the source and placed shots, in order.
+8. **`assemble`** the timeline from stretches of the source and placed shots, in order. Never
+   close a gap between two shots with a few frames of the source: in a shot where the person is
+   replaced those frames show the original person, and `assemble` refuses them. Remake the shot
+   so it reaches the cut instead.
 9. **`audio --rights "<basis>"`**: by default the source's own sound. If the remake is longer
    than the source, the music must carry on, never loop: give a longer recording of the same track
    (`--file`) and let `--match` find where the source's sound sits in it. `--rights` is always
@@ -82,9 +92,10 @@ Show the user frames and the comparison video at every review point; do not desc
 |---|---|
 | `doctor` | checks tools, server, nodes, models |
 | `init <run> --source --identity --consent [--character]` | creates the run folder |
-| `swap <run> --shot --start --duration [...]` | regenerates one stretch with the person replaced |
+| `scenes <run> [--set f1,f2]` | the source's shots as exact frame ranges (cuts measured at init) |
+| `swap <run> --shot (--scene n [--start] \| --start --duration) [...]` | regenerates one stretch with the person replaced |
 | `continue <run> --shot --after --seconds --prompt` | extends a shot |
-| `place <run> --shot [--attempt] [--feather]` | fits the generated clip to the source frame |
+| `place <run> --shot [--attempt] [--feather]` | fits the generated clip to the source frame, keeping the source's rhythm |
 | `approve <run> --shot` | records that the placed shot was watched and accepted |
 | `assemble <run> --segments "source:0-7.5,shot:far,..."` | joins the timeline |
 | `audio <run> --rights [--file --match | --start]` | adds the sound, never looping |
@@ -104,8 +115,12 @@ One command at a time per run folder: a second one is refused while the first is
 - Do not hand-edit graphs; change a command option. The kept settings are in the code.
 - Re-detecting a lost subject (`--recover`) is only for shots with one person: it can jump to
   someone else.
-- A stretch is cut on whole frames. If a neighbouring shot shows up in the first frame, the
-  stretch is one frame too long: shorten it.
+- Plan stretches on the measured cuts (`--scene`), not on breakdown times: those are off by a
+  frame or two, and one frame of the original person at a cut is visible.
+- 24 fps material carried at 30 fps repeats one frame in five. `swap` sends the model only the
+  distinct frames and `place` repeats them where the source did. Sending all of them let the
+  model's own 30->24 resampling drop real frames and keep repeats: the motion stalled two frames
+  in five. Keep that default (`--all-frames` turns it off) and read `cadence` after `place`.
 - Changing a shot makes what was built on it out of date: its approval, any continuation of it,
   the timeline and the final file are cleared. Redo them; do not reuse an old `final.mp4`.
 - Report honestly what was not checked. Tempo, lip sync and likeness are judged by the user's

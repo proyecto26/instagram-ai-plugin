@@ -29,8 +29,13 @@ Use the `instagram-video-breakdown` skill: it gives shot boundaries, who is in e
 large. From it, decide per shot: **keep** (the person is not in it), **swap**, or **continue**
 (extend the last swapped shot). Write the plan down before generating; each generation is minutes.
 
-Cut times from the breakdown are approximate to a frame or two. The first frame the model sees is
-saved as `shots/<id>/first_frame.jpg` on every run: check that it belongs to the right shot.
+Cut times from the breakdown are approximate to a frame or two, and one frame is enough to show
+the original person at a cut. `init` measures the cuts from the picture (a jump in the frame
+difference far above its neighbours) and `scenes <run>` lists every shot as an exact frame range.
+Check that list against the breakdown; a strobe or a whip pan can be taken for a cut, a dissolve can
+be missed: correct it with `scenes <run> --set <first frame of each shot,...>`. Plan every swap as
+`--scene <n>`. The first frame the model sees is saved as `shots/<id>/first_frame.jpg` on every
+run: check that it belongs to the right shot.
 
 ## 2. One identity, stated consent
 
@@ -43,7 +48,8 @@ saved as `shots/<id>/first_frame.jpg` on every run: check that it belongs to the
 
 ## 3. Swap: which options for which shot
 
-Every swap is `swap <run> --shot <id> --start <s> --duration <s>` plus:
+Every swap is `swap <run> --shot <id> --scene <n>` (the whole shot, cut to cut) or
+`--scene <n> --start <s>` (from a later point, still ending on the cut), plus:
 
 | Shot | Options | Kept run |
 |---|---|---|
@@ -74,16 +80,46 @@ Why each one:
 
 Limits: one person replaced per run, up to 10 s per stretch. Split longer shots at a cut.
 
+**Stretches end on cuts.** A stretch that stops 1-8 frames before a cut, or starts 1-8 frames
+after one, is refused: the leftover frames show the original person, and filling them with the
+source puts a flash of the original person (one or two frames) right at the cut, which viewers do notice.
+`--leave-original` accepts it when those frames really do not show the person. A stretch that
+crosses a cut is refused too: the tracker and the model would see the jump.
+
+**Frame rhythm.** The model works at 24 fps. Many reels are 24 fps material carried at 30 fps: one
+frame in five repeats the one before. `swap` measures that and sends the model only the distinct
+frames (at 24 fps, so nothing is resampled); `place` shows each generated frame where its source
+frame was and repeats it where the source repeats. Without this, the model's own 30->24 resampling
+can keep the repeats and drop real frames (which ones depends on the phase, and `--reverse` flips
+it): a shot can come back with about 18 distinct images per second and, put back at 30 fps, stall
+for two frames out of every five while the rest of the picture moves smoothly. Material that is not
+24-in-30 (real 30 fps, 25 fps, 60 fps) is sent as it is and resampled by the model. The detection is
+measured on the picture: very slow or nearly still stretches may not show their repeats, in which case
+everything is sent as before. Sources with a variable frame rate (many phone recordings) are refused
+at `init`, with the command to convert them: frame numbers and times would not agree.
+
 ## 4. Place, watch, approve
 
 `place <run> --shot <id>` writes `shots/<id>/placed.mp4` at the source size and frame rate
-(the model outputs 24 fps; frames are repeated to match).
+(the model outputs 24 fps; frames are repeated to match, where the source repeats them when only
+distinct frames were sent).
 
 - Cropped shot: the generated clip is scaled into the part of the crop it covers and blended with
   a feather that lies inside that area (`--feather`, default 12 px). Outside it the picture is the
   original, re-encoded at high quality (visually the same, not bit-identical).
 - The placed clip always has exactly the frame count of the stretch it replaces; when the 24 fps
   material comes up a frame short, the last frame is held.
+- When only distinct frames were sent, `place` refuses an attempt that came back with a different
+  number of frames, and `swap` measures how the returned frames line up with the frames sent (outside
+  the person the model keeps the picture it was given); `place` refuses an attempt clearly shifted.
+  The node pack counts floor(seconds x 24) frames, so asking for N frames as exactly N/24 s written
+  with five decimals can lose the last frame the model sees: for a reversed stretch that is the first
+  one in playing order, and every generated frame would land one frame early. The length is asked
+  with a little margin. When the measurement cannot decide (for example a person filling the frame),
+  it does not block: watch for it.
+- `place` reports `cadence`: frames inside the replaced area that stand still while the source moves,
+  and the longest run of them. More than two, or two in a row, usually read as jerky motion and it
+  warns. It is a measurement, not a verdict: watching the shot is still what decides.
 - Full-frame shot: scaled to cover the frame.
 
 Then watch it in motion, at full size, at least twice: once for the person (face, hair, arms,
@@ -112,11 +148,18 @@ Only a full-frame shot can be continued.
 
 ## 6. Assemble
 
-`assemble <run> --segments "source:0-7.77,shot:far,shot:close,shot:more"`
+`assemble <run> --segments "source:0-7.8,shot:far,shot:close,shot:more"`
 
 Segments are stretches of the source (`source:<start>-<end>`, seconds) and placed shots
 (`shot:<id>`), in playing order. A swapped shot replaces its own stretch: do not also list that
 stretch as source. Unapproved shots are refused unless `--allow-unapproved` (a draft).
+
+`assemble` checks every source stretch against the shots of the source: 8 frames or fewer taken
+from a shot in which the person is replaced are refused (a flash of the original person at a cut),
+longer ones are listed so you can check the person is not visible there (a camera approach where
+the person is a few pixels in a crowd is often kept as source, and that is fine).
+When the timeline reports a gap between two shots, the fix is a stretch that reaches the cut, not
+a few frames of the source.
 
 ## 7. Audio
 

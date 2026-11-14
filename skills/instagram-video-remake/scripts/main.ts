@@ -8,14 +8,15 @@
  * Nothing here publishes anything, and nothing leaves this computer unless --allow-remote-comfy is given.
  */
 import { randomUUID } from 'node:crypto';
-import { copyFile, mkdir, readFile, stat } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { FINE_RATE, findOffset } from './audio.ts';
 import { Comfy, ComfyError, DEFAULT_COMFY_URL, graphHash, pickVideo } from './comfy.ts';
+import { MODEL_FPS, detectCuts, modelSeconds, distinctFrames, extraRepeats, frameMap, originalInSwappedScenes, scenes as sceneList, stretchProblems } from './cadence.ts';
 import * as ff from './ff.ts';
-import { CONTINUE_DEFAULTS, H3_FPS, MODELS, REQUIRED_NODES, SAVE_NODE, SWAP_DEFAULTS, type Graph, type Rect, buildContinuation, continuationFrames, fillSwap, generatedArea, tierCanvas, toPreparedPoint } from './graphs.ts';
+import { CONTINUE_DEFAULTS, H3_FPS, MODELS, REQUIRED_NODES, SAVE_NODE, SWAP_DEFAULTS, SWAP_MAX_SECONDS, type Graph, type Rect, buildContinuation, continuationFrames, fillSwap, generatedArea, tierCanvas, toPreparedPoint } from './graphs.ts';
 import { type Attempt, type Manifest, type Shot, SCHEMA, checkId, chosen, invalidate, load, lockRun, parseSegments, reference, save, sha256File, shot, staleContinuation, timelineGaps } from './manifest.ts';
 
 const HELP = `instagram-video-remake — replace a person in a video, keep everything else
@@ -27,10 +28,14 @@ const HELP = `instagram-video-remake — replace a person in a video, keep every
       Start a remake. --consent is your own statement that the person in the photo agreed to appear
       in this video and that you may reuse the source. It is stored in remake.json.
 
-  swap <run> --shot <id> --start <s> --duration <s> [--prompt "<text>" | --prompt-file <f>]
+  scenes <run> [--set <frame,frame,...>]
+      List the shots of the source as exact frame ranges (measured from the picture at init). --set replaces
+      the measured cuts with your own (the first frame of each new shot) when the measurement is wrong.
+
+  swap <run> --shot <id> (--scene <n> [--start <s>] | --start <s> --duration <s>) [--prompt "<text>" | --prompt-file <f>]
        [--tier 480|768] [--seed <n>] [--expand <px>] [--recover]
        [--point <x,y> | --point-prepared <x,y>] [--detect <word>] [--selection largest|leftmost|rightmost|index] [--index <n>]
-       [--crop <w:h:x:y>] [--reverse] [--timeout <s>]
+       [--crop <w:h:x:y>] [--reverse] [--leave-original] [--all-frames] [--timeout <s>]
   swap <run> --shot <id> --resume <prompt-id|last>  collect a job that timed out or whose answer was lost
                                                     (same for continue); nothing is submitted again
       Regenerate one stretch of the source with the person replaced.
@@ -38,19 +43,28 @@ const HELP = `instagram-video-remake — replace a person in a video, keep every
       --point     one click on the person to replace, in pixels of the source frame (needed when others are in
                   frame). --point-prepared gives it in pixels of the frame the model works at instead.
       --reverse   run the stretch backwards (when the subject is only clearly visible at its END), then flip the result
+      --scene     the stretch is that shot of the source, cut to cut (see scenes); with --start it begins later and
+                  still ends on the cut. A stretch that crosses a cut, or stops or starts within 8 frames of one, is
+                  refused: those frames would show the original person. --leave-original accepts it anyway.
+      --all-frames  send every frame even when the stretch is 24 fps material repeated up to the source rate
+                  (by default only its distinct frames are sent, and place restores the source's rhythm)
 
   continue <run> --shot <id> --after <shot> --seconds <s> (--prompt "<text>" | --prompt-file <f>)
        [--guide-frames <n>] [--seed <n>] [--timeout <s>]
       Extend a shot past its end. The last frames of <shot> are anchored so the movement carries on.
 
-  place <run> --shot <id> [--attempt <n>] [--feather <px>]
-      Fit the generated clip to the source frame (a cropped shot is blended back over the original).
+  place <run> --shot <id> [--attempt <n>] [--feather <px>] [--allow-shift]
+      Fit the generated clip to the source frame (a cropped shot is blended back over the original), with the
+      source's own rhythm of repeated frames. Refuses an attempt whose frames are shifted against the stretch
+      they replace (measured after swap); --allow-shift places it anyway.
 
   approve <run> --shot <id> [--note "<text>"]
       Record that you watched the placed shot and accept it.
 
-  assemble <run> --segments "source:0-7.5,shot:far,source:10-13,shot:close,shot:more" [--allow-unapproved]
-      Join stretches of the source and placed shots into the timeline.
+  assemble <run> --segments "source:0-7.5,shot:far,source:10-13,shot:close,shot:more" [--allow-unapproved] [--allow-original]
+      Join stretches of the source and placed shots into the timeline. A stretch of the source of 8 frames or less
+      taken from a shot in which the person is replaced is refused (it is a flash of the original person);
+      longer ones are listed to check. --allow-original accepts them.
 
   audio <run> --rights "<basis>" [--file <recording> (--start <s> | --match)]
       Add the sound. Default: the source's own audio. A remake longer than the source needs --file: the same
@@ -73,7 +87,7 @@ export function parseArgs(argv: string[]): { cmd: string; pos: string[]; flags: 
     const [cmd = 'help', ...rest] = argv;
     const pos: string[] = [];
     const flags: Flags = {};
-    const BOOL = ['json', 'reverse', 'recover', 'match', 'allow-remote-comfy', 'allow-unapproved', 'help'];
+    const BOOL = ['json', 'reverse', 'recover', 'match', 'allow-remote-comfy', 'allow-unapproved', 'help', 'all-frames', 'leave-original', 'allow-original', 'allow-shift'];
     for (let i = 0; i < rest.length; i++) {
         const a = rest[i];
         if (!a.startsWith('--')) {
@@ -189,24 +203,74 @@ async function init(pos: string[], f: Flags): Promise<void> {
 
 async function initLocked(run: string, f: Flags, consent: string, source: string, identity: string): Promise<void> {
     if (await stat(path.join(run, 'remake.json')).catch(() => null)) throw new Error(`${run} already holds a remake. Use another folder.`);
+    const p = await ff.probe(source);
+    // Every step counts frames and turns them into seconds with one frame rate. A variable frame rate (common in
+    // phone recordings) breaks that silently: refuse it and say how to fix it.
+    if (p.variableRate || (await ff.unevenFrames(source, p.fps)) > 0) {
+        throw new Error(`${source} has a variable frame rate (${p.fps.toFixed(3)} fps on average): frame positions and times would not agree. Convert it to a constant rate first, e.g. ffmpeg -i "${source}" -fps_mode cfr -r ${Math.round(p.fps)} -c:v libx264 -crf 12 -c:a copy source_cfr.mp4`);
+    }
     await mkdir(path.join(run, 'refs'), { recursive: true });
     await mkdir(path.join(run, 'shots'), { recursive: true });
-    const p = await ff.probe(source);
     const src = `source${path.extname(source).toLowerCase() || '.mp4'}`;
     const idf = `refs/identity${path.extname(identity).toLowerCase() || '.jpg'}`;
     await copyFile(source, path.join(run, src));
     await copyFile(identity, path.join(run, idf));
+    const cuts = await measureCuts(path.join(run, src), p.fps);
     const m: Manifest = {
         schema: SCHEMA,
         createdAt: new Date().toISOString(),
-        source: { file: src, sha256: await sha256File(path.join(run, src)), width: p.width, height: p.height, fps: p.fps, duration: p.duration, hasAudio: p.hasAudio },
+        source: { file: src, sha256: await sha256File(path.join(run, src)), width: p.width, height: p.height, fps: p.fps, duration: p.duration, hasAudio: p.hasAudio, frames: cuts.frames, cuts: cuts.cuts, cutsBy: 'measured', evenTiming: true },
         consent: { statement: consent, at: new Date().toISOString() },
         references: [{ id: 'identity', role: 'identity', file: idf, sha256: await sha256File(path.join(run, idf)) }],
         ...(str(f, 'character') ? { character: str(f, 'character') } : {}),
         shots: [],
     };
     await save(run, m);
-    emit({ run, source: `${p.width}x${p.height}, ${p.fps.toFixed(2)} fps, ${p.duration.toFixed(2)} s${p.hasAudio ? '' : ', no audio'}`, next: 'swap <run> --shot <id> --start <s> --duration <s> ...' });
+    emit({ run, source: `${p.width}x${p.height}, ${p.fps.toFixed(2)} fps, ${p.duration.toFixed(2)} s${p.hasAudio ? '' : ', no audio'}`, scenes: describeScenes(m), next: 'check the scenes (scenes <run>), then swap <run> --shot <id> --scene <n> ...' });
+}
+
+/** Cuts of a video, measured from the picture: the first frame of every new shot. */
+async function measureCuts(file: string, fps: number): Promise<{ frames: number; cuts: number[] }> {
+    const d = await ff.frameDiffs(file, { fps });
+    return { frames: d.length + 1, cuts: detectCuts(d) };
+}
+
+/** The source's cuts, measured now and recorded if this run predates them. */
+async function sourceCuts(run: string, m: Manifest): Promise<{ frames: number; cuts: number[] }> {
+    if (!m.source.evenTiming) {
+        // Runs started before this check: frame numbers are turned into times with one rate, so it must hold.
+        const uneven = await ff.unevenFrames(path.join(run, m.source.file), m.source.fps);
+        if (uneven > 0) throw new Error(`The source has ${uneven} frame(s) off a constant ${m.source.fps.toFixed(3)} fps grid (variable frame rate): frame positions and times would not agree. Convert it to a constant rate and start a new run.`);
+        m.source.evenTiming = true;
+        await save(run, m);
+    }
+    if (!m.source.cuts || !m.source.frames) {
+        const c = await measureCuts(path.join(run, m.source.file), m.source.fps);
+        Object.assign(m.source, { frames: c.frames, cuts: c.cuts, cutsBy: 'measured' });
+        await save(run, m);
+    }
+    return { frames: m.source.frames!, cuts: m.source.cuts! };
+}
+
+function describeScenes(m: Manifest): string[] {
+    const fps = m.source.fps;
+    return sceneList(m.source.cuts ?? [], m.source.frames ?? Math.round(m.source.duration * fps)).map(
+        (sc) => `scene ${sc.n}: frames ${sc.first}-${sc.end - 1} (${(sc.first / fps).toFixed(3)}-${(sc.end / fps).toFixed(3)} s)`,
+    );
+}
+
+async function scenesCmd(pos: string[], f: Flags): Promise<void> {
+    const run = pos[0];
+    const m = await load(run);
+    const { frames } = await sourceCuts(run, m);
+    if (str(f, 'set') !== undefined) {
+        const cuts = str(f, 'set')!.split(',').map((x) => x.trim()).filter(Boolean).map(Number);
+        if (cuts.some((c) => !Number.isInteger(c) || c <= 0 || c >= frames)) throw new Error(`--set takes whole frame numbers between 1 and ${frames - 1}: the first frame of each new shot.`);
+        m.source.cuts = [...new Set(cuts)].sort((a, b) => a - b);
+        m.source.cutsBy = 'hand';
+        await save(run, m);
+    }
+    emit({ run, fps: m.source.fps, frames, cutsBy: m.source.cutsBy, scenes: describeScenes(m), next: 'swap <run> --shot <id> --scene <n> ...' });
 }
 
 // ---------------------------------------------------------------- generation
@@ -292,8 +356,29 @@ async function swap(pos: string[], f: Flags): Promise<void> {
         // and the shot's own recorded settings decide how the result is treated.
         attempt = await resumable(comfy, s, id, str(f, 'resume')!, 'swap');
     } else {
+        const fps = m.source.fps;
+        const { frames: total, cuts } = await sourceCuts(run, m);
+        let wantStart: number;
+        let wantDuration: number;
+        if (str(f, 'scene')) {
+            // The stretch ends ON the cut: a stretch that stops short leaves frames of the original person.
+            const sc = sceneList(cuts, total).find((x) => x.n === num(f, 'scene'));
+            if (!sc) throw new Error(`There is no scene ${str(f, 'scene')}. scenes ${run} lists them.`);
+            if (str(f, 'duration')) throw new Error('--scene ends the stretch on the cut; give --start to begin later, not --duration.');
+            const first = str(f, 'start') ? Math.round(num(f, 'start') * fps) : sc.first;
+            if (first < sc.first || first >= sc.end) throw new Error(`--start must fall inside scene ${sc.n} (${(sc.first / fps).toFixed(3)}-${(sc.end / fps).toFixed(3)} s).`);
+            wantStart = first / fps;
+            wantDuration = (sc.end - first) / fps;
+        } else {
+            wantStart = num(f, 'start');
+            wantDuration = num(f, 'duration');
+        }
         // Snapped to whole frames of the source, so the stretch recorded is exactly the one cut.
-        const span = ff.frameSpan(num(f, 'start'), num(f, 'duration'), m.source.fps);
+        const span = ff.frameSpan(wantStart, wantDuration, fps);
+        const problems = stretchProblems(span.first, span.first + span.frames, cuts);
+        if (problems.length && !f['leave-original']) {
+            throw new Error(`The stretch (source frames ${span.first}-${span.first + span.frames - 1}) does not fit the shots of the source: ${problems.join('; ')}. Use --scene <n> to cover a shot cut to cut (scenes ${run} lists them), or pass --leave-original if those frames really do not show the person.`);
+        }
         const start = Number(span.start.toFixed(5));
         const duration = Number(span.duration.toFixed(5));
         if (start + duration > m.source.duration + 0.05) throw new Error(`The stretch ${start}–${(start + duration).toFixed(2)} s is outside the ${m.source.duration.toFixed(2)} s source.`);
@@ -322,7 +407,15 @@ async function swap(pos: string[], f: Flags): Promise<void> {
         const n = s.attempts.length + 1;
         await mkdir(dir, { recursive: true });
         const driving = path.join(dir, 'driving.mp4');
-        await ff.cut(path.join(run, m.source.file), driving, { start, duration, fps: m.source.fps, crop, reverse: reversed, hasAudio: m.source.hasAudio });
+        // 24 fps material carried at a higher rate repeats frames. The model resamples to 24 fps on its own, and that
+        // can keep the repeats and drop real frames (motion turns jerky). Send only the distinct frames instead.
+        // A 24 fps source is sent frame for frame as well, so the same protections (exact length asked, frame count and
+        // alignment checked) apply to it.
+        const native = Math.abs(fps - MODEL_FPS) < 0.05; // 24 and 23.976
+        const keep = native ? Array.from({ length: span.frames }, (_, i) => i) : f['all-frames'] ? null : distinctFrames(await ff.frameDiffs(path.join(run, m.source.file), { fps, first: span.first, frames: span.frames }), span.frames, fps);
+        if (keep && !native) log(`the stretch is ${MODEL_FPS} fps material repeated to ${fps.toFixed(2)} fps: sending its ${keep.length} distinct frames of ${span.frames}`);
+        if (keep && keep.length > SWAP_MAX_SECONDS * MODEL_FPS) throw new Error(`The stretch has ${keep.length} frames to send; a run takes up to ${SWAP_MAX_SECONDS * MODEL_FPS}. Split it at a cut or with --start.`);
+        await ff.cut(path.join(run, m.source.file), driving, { start, duration, fps, crop, reverse: reversed, hasAudio: m.source.hasAudio, ...(keep ? { keep, keepFps: MODEL_FPS } : {}) });
         // The first frame the model sees: the detector's point or word must hit the subject HERE.
         const firstFrame = path.join(dir, 'first_frame.jpg');
         await ff.frameAt(driving, firstFrame, 'first');
@@ -345,10 +438,11 @@ async function swap(pos: string[], f: Flags): Promise<void> {
             video: await comfy.upload(driving, `${prefix}_driving.mp4`),
             identity: await comfy.upload(path.join(run, identity.file), `${prefix}_identity${path.extname(identity.file)}`),
             start: 0,
-            duration,
+            // Otherwise the model resamples to 24 fps; ask for the frames that gives, with the same margin.
+            duration: modelSeconds(keep ? keep.length : Math.round(duration * MODEL_FPS)),
             prefix,
         });
-        attempt = { n, at: new Date().toISOString(), kind: 'swap', settings: { ...settings, identitySha256: identity.sha256 }, graphHash: graphHash(graph), clientId: randomUUID(), status: 'submitted' };
+        attempt = { n, at: new Date().toISOString(), kind: 'swap', settings: { ...settings, identitySha256: identity.sha256, drivingSha256: await sha256File(driving) }, graphHash: graphHash(graph), clientId: randomUUID(), status: 'submitted', ...(keep ? { keep } : {}) };
         s.attempts.push(attempt);
         // A new attempt makes everything built on this shot out of date, whether or not it succeeds.
         invalidate(m, id, 'attempt');
@@ -362,7 +456,19 @@ async function swap(pos: string[], f: Flags): Promise<void> {
     Object.assign(attempt, { output: path.relative(run, out).replace(/\\/g, '/'), outputSha256: await sha256File(out), frames: p.frames });
     invalidate(m, id, 'attempt');
     await save(run, m);
-    emit({ shot: id, attempt: attempt.n, output: out, size: `${p.width}x${p.height}`, frames: p.frames, seconds: attempt.seconds, next: `place ${run} --shot ${id}   (then watch it, then approve)` });
+    if (attempt.keep && p.frames !== attempt.keep.length) log(`warning: ${attempt.keep.length} frames were sent and ${p.frames} came back; place refuses this attempt.`);
+    // The generated frames must line up with the frames they replace. A clip shifted by a frame (a frame lost at the
+    // start) plays early against everything around it; measured on the picture, since outside the person the model
+    // keeps what it was given. Only comparable when the clip sent is itself at 24 fps (distinct frames sent), and
+    // only against the very clip this attempt was sent (driving.mp4 is rewritten by each new attempt).
+    const driving = path.join(dir, 'driving.mp4');
+    if (attempt.keep && (await stat(driving).catch(() => null)) && (await sha256File(driving)) === attempt.settings.drivingSha256) {
+        const al = await ff.frameAlignment(out, driving, Boolean(s!.reversed));
+        attempt.alignment = { shift: al.shift, error: Number(al.error.toFixed(2)), errorAtZero: Number(al.errorAtZero.toFixed(2)) };
+        if (al.shift !== 0 && al.error < 0.8 * al.errorAtZero) log(`warning: the generated clip lines up best with the clip sent shifted by ${al.shift} frame(s) (error ${al.error.toFixed(1)} against ${al.errorAtZero.toFixed(1)} unshifted): it would play out of step. Do not place it; make a new attempt and report this.`);
+    }
+        await save(run, m);
+    emit({ shot: id, attempt: attempt.n, output: out, size: `${p.width}x${p.height}`, frames: p.frames, ...(attempt.keep ? { sent: `${attempt.keep.length} distinct frames at ${MODEL_FPS} fps` } : {}), seconds: attempt.seconds, next: `place ${run} --shot ${id}   (then watch it, then approve)` });
 }
 
 async function continueShot(pos: string[], f: Flags): Promise<void> {
@@ -450,6 +556,12 @@ async function place(pos: string[], f: Flags): Promise<void> {
     const a = chosen(s);
     const stale = staleContinuation(m, s);
     if (stale) throw new Error(`Shot "${s.id}" is out of date: ${stale}. Generate it again with continue.`);
+    if (a.keep && a.frames !== undefined && a.frames !== a.keep.length && !f['allow-shift']) {
+        throw new Error(`Attempt ${a.n} of shot "${s.id}" came back with ${a.frames} frames for the ${a.keep.length} sent: it cannot be lined up with the stretch frame for frame. Make a new attempt (or --allow-shift to place it anyway).`);
+    }
+    if (a.alignment && a.alignment.shift !== 0 && a.alignment.error < 0.8 * a.alignment.errorAtZero && !f['allow-shift']) {
+        throw new Error(`Attempt ${a.n} of shot "${s.id}" is shifted by ${a.alignment.shift} frame(s) against the stretch it replaces and would play out of step. Make a new attempt (or --allow-shift to place it anyway).`);
+    }
     const gen = path.join(run, a.output!);
     if ((await sha256File(gen)) !== a.outputSha256) throw new Error(`The generated file of attempt ${a.n} changed since it was made. Generate the shot again.`);
     const gp = await ff.probe(gen);
@@ -461,13 +573,34 @@ async function place(pos: string[], f: Flags): Promise<void> {
     const span = s.kind === 'swap' ? ff.frameSpan(s.start!, s.duration!, m.source.fps) : null;
     const frames = span ? span.frames : Math.round((gp.frames / H3_FPS) * m.source.fps);
     if (s.kind === 'swap' && s.crop) area = generatedArea(s.crop, gp.width, gp.height);
-    await ff.placeBack({ source: path.join(run, m.source.file), firstFrame: span?.first ?? 0, frames, generated: gen, out, frame, area, feather });
+    let source = gen;
+    let work: string | null = null;
+    try {
+        if (a.keep && span) {
+            // Only the distinct frames were sent: show each generated frame where its source frame was, and repeat it
+            // where the source repeats, so the shot keeps exactly the source's rhythm.
+            work = await mkdtemp(path.join(run, 'shots', s.id, 'retime-'));
+            source = path.join(work, 'retimed.mp4');
+            await ff.retime(gen, source, frameMap(a.keep, frames, gp.frames, Boolean(s.reversed)), m.source.fps, work);
+        }
+        await ff.placeBack({ source: path.join(run, m.source.file), firstFrame: span?.first ?? 0, frames, generated: source, out, frame, area, feather });
+    } finally {
+        if (work) await rm(work, { recursive: true, force: true });
+    }
     const pp = await ff.probe(out);
     if (pp.frames !== frames) throw new Error(`The placed clip has ${pp.frames} frames instead of ${frames}. It was not accepted.`);
+    // Repeated frames the source does not have read as jumps once the clip plays. Measured inside the replaced area.
+    let cadence: { extraRepeats: number; longestRun: number } | undefined;
+    if (span) {
+        const region = area ?? { x: 0, y: 0, w: m.source.width, h: m.source.height };
+        const r = extraRepeats(await ff.frameDiffs(out, { fps: m.source.fps, area: region }), await ff.frameDiffs(path.join(run, m.source.file), { fps: m.source.fps, first: span.first, frames, area: region }));
+        cadence = { extraRepeats: r.extra, longestRun: r.longestRun };
+        if (r.extra > 2 || r.longestRun >= 2) log(`warning: the placed shot repeats ${r.extra} frame(s) the source does not${r.longestRun >= 2 ? `, up to ${r.longestRun} in a row` : ''}: motion will look jerky. Make a new attempt without --all-frames.`);
+    }
     invalidate(m, s.id, 'placement');
-    s.placed = { file: path.relative(run, out).replace(/\\/g, '/'), sha256: await sha256File(out), ...(area ? { area, feather: feather ?? 12 } : {}), fromAttempt: a.n };
+    s.placed = { file: path.relative(run, out).replace(/\\/g, '/'), sha256: await sha256File(out), ...(area ? { area, feather: feather ?? 12 } : {}), fromAttempt: a.n, ...(cadence ? { cadence } : {}) };
     await save(run, m);
-    emit({ shot: s.id, placed: out, frames, ...(area ? { area: `${area.w}x${area.h}+${area.x}+${area.y} (outside it the picture is the original)` } : { fit: 'whole frame' }), next: `watch ${out} in motion, then: approve ${run} --shot ${s.id}` });
+    emit({ shot: s.id, placed: out, frames, ...(area ? { area: `${area.w}x${area.h}+${area.x}+${area.y} (outside it the picture is the original)` } : { fit: 'whole frame' }), ...(cadence ? { cadence: `${cadence.extraRepeats} repeated frame(s) the source does not have, longest run ${cadence.longestRun}` } : {}), next: `watch ${out} in motion, then: approve ${run} --shot ${s.id}` });
 }
 
 async function approve(pos: string[], f: Flags): Promise<void> {
@@ -505,10 +638,20 @@ async function assemble(pos: string[], f: Flags): Promise<void> {
             // The file on disk, not the record: an edited file is not the one that was approved.
             if ((await sha256File(path.join(run, s.placed.file))) !== s.placed.sha256) throw new Error(`The placed file of shot "${s.id}" changed since it was written. Run place again.`);
             if (!s.approved || s.approved.sha256 !== s.placed.sha256) notApproved.push(s.id);
+            // Placements made before the frame checks existed are checked here too.
+            const a = s.attempts.find((x) => x.n === s.placed!.fromAttempt);
+            const off = a?.keep && a.frames !== undefined && a.frames !== a.keep.length ? `came back with ${a.frames} frames for the ${a.keep.length} sent` : a?.alignment && a.alignment.shift !== 0 && a.alignment.error < 0.8 * a.alignment.errorAtZero ? `is shifted by ${a.alignment.shift} frame(s)` : '';
+            if (off && !f['allow-shift']) throw new Error(`Shot "${s.id}" was placed from attempt ${a!.n}, which ${off}: it plays out of step. Make a new attempt (or --allow-shift).`);
             parts.push({ file: path.join(run, s.placed.file) });
         }
     }
     if (notApproved.length && !f['allow-unapproved']) throw new Error(`Not approved yet: ${notApproved.join(', ')}. Watch each placed shot and run approve, or pass --allow-unapproved for a draft.`);
+    const leftovers = await originalLeftovers(run, m, segments);
+    const slivers = leftovers.filter((x) => x.end - x.first <= SLIVER_FRAMES);
+    if (slivers.length && !f['allow-original']) {
+        throw new Error(`The timeline shows the original person: ${slivers.map((x) => `${x.label} takes source frames ${x.first}-${x.end - 1} from scene ${x.scene}, where shot ${x.shots.join('/')} replaces the person`).join('; ')}. Remake the shot so it reaches the cut (swap --scene) instead of filling the gap with the source, or pass --allow-original.`);
+    }
+    for (const x of leftovers.filter((y) => y.end - y.first > SLIVER_FRAMES)) log(`check: ${x.label} keeps source frames ${x.first}-${x.end - 1} of scene ${x.scene}, where shot ${x.shots.join('/')} replaces the person. Make sure the original person is not visible there.`);
     const gaps = timelineGaps(segments, m.shots, m.source.fps);
     for (const g of gaps) log(`warning: ${g}. The picture after it will be out of step with the source sound.`);
     const out = path.join(run, 'timeline.mp4');
@@ -518,6 +661,25 @@ async function assemble(pos: string[], f: Flags): Promise<void> {
     delete m.final;
     await save(run, m);
     emit({ timeline: out, duration: p.duration.toFixed(2), frames: p.frames, sourceDuration: m.source.duration.toFixed(2), ...(notApproved.length ? { draft: `includes unapproved shots: ${notApproved.join(', ')}` } : {}), ...(gaps.length ? { gaps } : {}), next: `audio ${run} --rights "<basis>"` });
+}
+
+/** A stretch of the original this short, in a shot where the person is replaced, is a leftover at a cut. */
+const SLIVER_FRAMES = 8;
+
+async function originalLeftovers(run: string, m: Manifest, segments: ReturnType<typeof parseSegments>): Promise<ReturnType<typeof originalInSwappedScenes>> {
+    const fps = m.source.fps;
+    const { frames, cuts } = await sourceCuts(run, m);
+    const src = segments.flatMap((seg) => {
+        if (!('source' in seg)) return [];
+        const g = ff.frameSpan(seg.source[0], seg.source[1] - seg.source[0], fps);
+        return [{ first: g.first, end: g.first + g.frames, label: `source:${seg.source[0]}-${seg.source[1]}` }];
+    });
+    const used = new Set(segments.flatMap((seg) => ('shot' in seg ? [seg.shot] : [])));
+    const swaps = m.shots.filter((x) => x.kind === 'swap' && used.has(x.id)).map((x) => {
+        const g = ff.frameSpan(x.start!, x.duration!, fps);
+        return { id: x.id, first: g.first, end: g.first + g.frames };
+    });
+    return originalInSwappedScenes(src, swaps, sceneList(cuts, frames));
 }
 
 async function matchOffset(clip: string, track: string, clipSeconds: number): Promise<ReturnType<typeof findOffset>> {
@@ -621,9 +783,9 @@ export async function main(argv: string[]): Promise<void> {
         process.stdout.write(HELP);
         return;
     }
-    const needsRun = ['swap', 'continue', 'place', 'approve', 'assemble', 'audio', 'compare', 'status'];
+    const needsRun = ['scenes', 'swap', 'continue', 'place', 'approve', 'assemble', 'audio', 'compare', 'status'];
     if (needsRun.includes(cmd) && !pos[0]) throw new Error(`Usage: ${cmd} <run-folder> ...`);
-    const writers: Record<string, (pos: string[], f: Flags) => Promise<void>> = { swap, continue: continueShot, place, approve, assemble, audio };
+    const writers: Record<string, (pos: string[], f: Flags) => Promise<void>> = { scenes: scenesCmd, swap, continue: continueShot, place, approve, assemble, audio };
     if (writers[cmd]) {
         await load(pos[0]); // a clear error before locking when the folder is not a remake
         const release = await lockRun(pos[0]);

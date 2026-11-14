@@ -10,6 +10,11 @@ selection problem visible there.
 |---|---|---|
 | `SAM lost the selected person at frames [1, 2, ...]` (from the first frames) | the point or word did not land on the person in the first frame the model sees | open `first_frame.jpg`; fix `--point`; if the frame belongs to a different shot, the stretch is wrong by a frame: adjust `--start` / `--duration` |
 | `SAM lost the selected person at frames [40, 41, ...]` (later frames) | the person is hidden or leaves the frame part-way | shorten the stretch to where they are visible; or `--reverse` if they are clear at the end; `--recover` only when they are the only person |
+| `SAM lost ... at frames [N]`, N the last frame, with `--reverse` | the first frames of the stretch (the last ones the model tracks) show the person too small or covered | start the stretch a frame or two later (`--scene n --start <s>`); it still ends on the cut |
+| `has a variable frame rate` (init) | phone recording or screen capture | convert with the ffmpeg command printed, then `init` with the converted file |
+| `came back with N frames for the M sent` (place) | the model returned a different length | a new attempt; if it repeats, report it with the attempt in `remake.json` |
+| `does not fit the shots of the source: it ends N frame(s) before the cut` | the stretch was planned on approximate times | `--scene <n>`; if the measured cuts are wrong, `scenes --set` |
+| `The timeline shows the original person: source:... takes source frames ...` | a gap between two shots was filled with frames of the source | remake the shot(s) so they reach the cut; drop that source stretch |
 | `Required input is missing` / `Value not in list` from ComfyUI | node pack or ComfyUI version differs from the one the graph was written for | run `doctor`; update ComfyUI; reinstall the node pack at the pinned commit (`setup.md`) |
 | `ComfyUI did not answer` | server not running or another port | start ComfyUI; `--comfy-url` |
 | `still running after N s ... --resume <id>` | generation slower than `--timeout` | `swap <run> --shot <id> --resume <prompt-id>` (or `continue ...`); nothing is prepared or submitted again |
@@ -42,7 +47,10 @@ selection problem visible there.
 | Continuation jumps at the join | wrong attempt of the previous shot was continued, or the previous shot was re-placed | continue from the approved attempt; regenerate the continuation after any change to the shot before it |
 | Continuation changes framing or background | camera line missing | "static camera, same framing"; shorter `--seconds` |
 | Sound repeats | audio was looped by hand somewhere | use `audio --file ... --match` |
-| Stutter after placing | 24 fps material shown at 30 fps | expected and usually invisible; if it shows on fast motion, deliver the remake at 24 fps |
+| `the generated clip lines up best with the clip sent shifted by N frame(s)` (swap) / `is shifted by N frame(s)` (place) | frames were lost or added at one end of the generated clip | a new attempt; if it repeats, report it with the shot's `remake.json` entry: the frame count asked of the model is wrong |
+| The original person flashes for a frame or two at a cut | a source stretch between two shots, or a shot that stops before the cut | `assemble` now refuses it; plan with `--scene` |
+| The replaced person moves in jumps (two still frames, then a jump) while the rest is smooth; `place` warns about `cadence` | the model resampled 24-in-30 material and lost real frames (an attempt made with `--all-frames`, or before this check existed) | a new attempt without `--all-frames` |
+| A slight regular stutter, also in the source | 24 fps material shown at 30 fps (one repeat in five) | that is the source's own rhythm; `place` keeps it on purpose |
 
 ## When to stop
 

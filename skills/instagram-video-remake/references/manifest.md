@@ -6,7 +6,7 @@
   source.mp4             copy of the source
   refs/identity.jpg      the identity photo
   shots/<id>/
-    driving.mp4          the stretch sent to the model (cropped / reversed as asked)
+    driving.mp4          the stretch sent to the model (cropped / reversed as asked; distinct frames only, at 24 fps, for 24-in-30 material)
     first_frame.jpg      the first frame the model sees
     attempt<N>.raw.mp4   exactly what ComfyUI returned
     attempt<N>.mp4       the same, in forward order and without guide frames
@@ -21,16 +21,16 @@
 
 | Field | Meaning |
 |---|---|
-| `source` | file, sha256, size, frame rate, duration, whether it has audio |
+| `source` | file, sha256, size, frame rate, duration, whether it has audio, exact frame count, `cuts` (first frame of each shot) and whether they were measured or set by hand |
 | `consent` | the user's statement and when it was given |
 | `references[]` | id, role (`identity`), file, sha256 |
 | `character` | the character card, when given |
 | `shots[]` | one per regenerated stretch or continuation |
 | `shots[].start/duration/crop/reversed` | what was sent to the model (swap) |
 | `shots[].after` | the shot a continuation extends |
-| `shots[].attempts[]` | number, time, every setting, graph hash, ComfyUI prompt id, status (`submitted`, `done`, `failed`, `unknown`), output file and its sha256, frame count, seconds taken |
+| `shots[].attempts[]` | number, time, every setting, graph hash, ComfyUI prompt id, status (`submitted`, `done`, `failed`, `unknown`), output file and its sha256, frame count, seconds taken, `keep`: the frames of the stretch sent to the model when only its distinct frames were sent, and `alignment`: the measured shift between the generated frames and the frames sent (0 is right) |
 | `shots[].selected` | attempt chosen with `place --attempt` (default: the last finished one) |
-| `shots[].placed` | file, sha256, area and feather used, attempt it came from |
+| `shots[].placed` | file, sha256, area and feather used, attempt it came from, `cadence` (repeats the source does not have, longest run) |
 | `shots[].approved` | when it was approved and the sha256 it was approved for |
 | `timeline` | segments, file, sha256, duration |
 | `audio` | `source` or `file` (with its sha256), start, the match result, where the sound was measured in the finished file, the stated basis |

@@ -80,7 +80,8 @@ export function fillSwap(template: Graph, o: SwapOptions): Graph {
     for (const id of ['30', '9', 'trim', '31', '101', '103', '104', '105', '106', '107', '110', '801', '803', '807', '809']) {
         if (!w[id]) throw new Error(`The swap template is missing node "${id}": it is not the bundled h3_swap.api.json.`);
     }
-    if (!(o.duration > 0) || o.duration > SWAP_MAX_SECONDS) throw new Error(`A swap covers up to ${SWAP_MAX_SECONDS} s per run; got ${o.duration}.`);
+    // Half a frame of margin: the length asked for N frames is a little more than N / 24 (see modelSeconds).
+    if (!(o.duration > 0) || o.duration > SWAP_MAX_SECONDS + 0.5 / H3_FPS) throw new Error(`A swap covers up to ${SWAP_MAX_SECONDS} s per run; got ${o.duration}.`);
     if (o.start < 0) throw new Error('start must not be negative.');
     w['30'].inputs.file = o.video;
     w['9'].inputs.image = o.identity;
