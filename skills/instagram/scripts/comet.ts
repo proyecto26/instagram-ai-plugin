@@ -1,7 +1,7 @@
 /**
  * The "comet async" request shape instagram.com uses for some writes (configure_to_clips always; stories and
- * carousels behind server gates). Evidence: docs/reviews/evidence-web-publish-2026-11-12.md, a live capture of the
- * web composer, and the web client's getAsyncParams / DTSGUtils / PolarisCreationAPI modules.
+ * carousels behind server gates). Evidence: a live capture of the web composer publishing a reel (2026-11-12; see
+ * PR #1), and the web client's getAsyncParams / DTSGUtils / PolarisCreationAPI modules.
  *
  * The request is the ordinary form fields plus a set of page-context parameters; the answer is always HTTP 200
  * with `for (;;);{"__ar":1,"payload":{...}}`. "Still processing" is payload.statusCode 202, not an HTTP status.
