@@ -104,7 +104,7 @@ raw file bytes as the body (observed in the live upload module, `withCredentials
 |---|---|---|---|
 | photo | `www/api/v1/media/configure/` | form | `source_type=library, caption, upload_id, disable_comments, like_and_view_counts_disabled, igtv_share_preview_to_feed=1, is_unified_video=1, video_subtitles_enabled=0, is_meta_only_post=0, media_share_flow=creation_flow, share_to_threads=false, custom_accessibility_caption?` |
 | carousel | `www/api/v1/media/configure_sidecar/` | JSON | `{archive_only:false, caption, children_metadata:[{upload_id}...] (user order), client_sidecar_id, disable_comments:"0", like_and_view_counts_disabled:false, source_type:"library"}` |
-| reel | `www/api/v1/media/configure_to_clips/` | form | photo flags plus `clips_share_preview_to_feed=1|0, archive_only=false, disable_oa_reuse=false` |
+| reel | `www/api/v1/media/configure_to_clips/` | comet async form | photo flags plus `clips_share_preview_to_feed=1|0, archive_only=false, disable_oa_reuse=false`; optional `usertags`, `invite_coauthor_user_ids_string`, `is_gen_ai_self_disclosure` + `gen_ai_detection_method` |
 | story | `www/api/v1/media/configure_to_story/` | form | `source_type=library, configure_mode=1, upload_id, caption=""` (unverified) |
 
 Fields seen in the live `configure_to_clips` builder include `caption`, `upload_id`,
@@ -143,3 +143,34 @@ always need a manual check.
 3. Run `npx -y bun scripts/main.ts probe --refresh-config --graphql`.
 4. Edit `scripts/endpoints.ts` / `publish.ts`, run `cd test && npx -y bun test unit`, then the
    opt-in live tests (see the repository README).
+
+## The comet async form (reel publish step)
+
+Captured from the web composer on 2026-11-12 (see `scripts/comet.ts`). The plain form now gets HTTP 200 with
+an empty body on `configure_to_clips`; the web client sends, and the skill reproduces:
+
+- the publish fields, plus `signed_body = "SIGNATURE." + JSON.stringify(<those fields>)`;
+- page-context parameters read from the signed-in home page HTML (server definitions `DTSGInitialData`,
+  `LSD`, `SprinkleConfig`, `CurrentUserInitialData`, `SiteData`, `InstagramWebPushInfo`): `__d=www`,
+  `__user`, `__a=1`, `__req` (base-36 counter), `__hs`, `__rev`, `__s`, `__hsi`, `__comet_req`, `fb_dtsg`,
+  `jazoest` (config version + sum of the token's character codes), `lsd`, `__spin_r/b/t`;
+- headers `X-FB-LSD`, `X-IG-D: www`, `X-Instagram-AJAX` (rollout hash), `X-Web-Session-ID`.
+
+Not sent: browser resource-state bitmaps (`__dyn`, `__csr`, `__hsdp`, `__hblp`, `__sjsp`), telemetry
+(`qpl_active_flow_ids`, `__crn`) and browser measurements (`dpr`, `__ccg`).
+
+The answer is always HTTP 200 with `for (;;);{"__ar":1,"payload":{...}}`:
+
+| Answer | Meaning | What the skill does |
+|---|---|---|
+| `payload.statusCode` = 202, no media, no error | still processing | repeats the same request (same `upload_id`, same `signed_body`) with a growing wait |
+| `payload.media`, a completed `medias[].media_dict`, or a root id | created | success |
+| empty body | request shape not accepted | never success, never retried; the publish stays unresolved |
+| envelope `error`, payload failure, account signal | failure | stops; the publish stays unresolved until `pending resolve` |
+
+`fb_dtsg`, `lsd`, `jazoest`, `__hsi`, `__hs`, `__s` and the two headers derived from them are secrets: they
+live in memory only and never appear in a dry run, an error, the action log or the pending ledger.
+
+Stories and carousels use this form only when the page says so (server gates 28588 and 18382; both were off
+on 2026-11-12). The carousel variant is NOT implemented for nested fields: if gate 18382 turns on, publish
+carousels from the app until it is.

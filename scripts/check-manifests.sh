@@ -112,7 +112,7 @@ for f in ("name", "version", "description"):
         errors.append(f".codex-plugin/plugin.json is missing required field '{f}'")
 
 import re
-for sk in ['instagram', 'instagram-content', 'instagram-audit', 'instagram-research', 'instagram-ads']:
+for sk in ['instagram', 'instagram-content', 'instagram-audit', 'instagram-research', 'instagram-ads', 'instagram-video-breakdown', 'instagram-video-remake']:
     p = f"skills/{sk}/SKILL.md"
     if not os.path.isfile(p):
         errors.append(f"{p} not found"); continue

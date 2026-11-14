@@ -24,6 +24,19 @@ import {
     type ContractName,
     type PostOptions,
     type PublishPlan,
+    type StoryMention,
+    mentionReadBack,
+    parseHandleList,
+    parseMentionList,
+    reelExtrasReadBack,
+    approvalKey,
+    planDigest,
+    aiLabelReadBack,
+    isAccountSignal,
+    unsupportedFlags,
+    REEL_COLLABORATORS_MAX,
+    REEL_TAGS_MAX,
+    type UserRef,
 } from './publish.ts';
 import { getComments, getHashtag, getMedia, getPosts, getProfile, search, whoami } from './read.ts';
 
@@ -53,7 +66,13 @@ Write (dry run unless --confirm)
   post photo <image> [--caption <text> | --caption-file <f>] [--alt <text>]
   post carousel <file1> <file2> ... [same caption options]
   post reel <video> [--cover <jpg> | --cover-at <sec>] [--no-feed]
+            [--tag user1,user2] [--collab user] [--ai-label]   Tag people, invite collaborators, mark as AI-generated
+            [--user-id name=123,...]    Numeric ids you already know for those handles (skips the lookup; shown as unverified)
+            [--approve name=123,...]    Required with --confirm: the exact recipients printed by the dry run
+            (--tag and --ai-label are verified live; --collab has never been sent live and needs --experimental)
   post story <image|video> [--cover <jpg> | --cover-at <sec>]   (video up to 60 s)
+             [--mention user1,user2]     NOT WORKING: tried live, Instagram did not keep the mention. Add mentions in the app.
+                                         (kept for testing; needs --experimental)
   edit-caption <ref> --caption <text> | --caption-file <f>
   comment <ref> --text <text>
   reply <ref> <commentId> --text <text>
@@ -75,7 +94,7 @@ interface Args {
     flags: Record<string, string | boolean>;
 }
 
-const BOOL_FLAGS = new Set(['json', 'force', 'confirm', 'experimental', 'no-feed', 'disable-comments', 'hide-likes', 'keep-profile', 'refresh-config', 'graphql', 'posted', 'not-posted', 'ignore-pending', 'help']);
+const BOOL_FLAGS = new Set(['json', 'force', 'confirm', 'experimental', 'no-feed', 'disable-comments', 'hide-likes', 'keep-profile', 'ai-label', 'refresh-config', 'graphql', 'posted', 'not-posted', 'ignore-pending', 'help']);
 
 export function parseArgs(argv: string[]): Args {
     const out: Args = { _: [], flags: {} };
@@ -172,20 +191,102 @@ async function dryRunAccount(flags: Args['flags']): Promise<Record<string, unkno
     }
 }
 
-async function runPublish(plan: PublishPlan, flags: Args['flags'], contract: ContractName): Promise<void> {
+/**
+ * Handles to numeric ids. `--user-id name=123` supplies ids the caller already knows (no lookup; reported as
+ * unverified, because nothing here proves the id belongs to that handle); the rest are looked up (read-only).
+ * A rate-limit or checkpoint answer from the lookup stops the command: do not re-run with ids to get past it.
+ */
+async function resolveUsers(names: string[], given?: string): Promise<{ refs: Map<string, UserRef>; manual: string[] }> {
+    const refs = new Map<string, UserRef>();
+    const manual: string[] = [];
+    for (const pair of (given ?? '').split(',').map((p) => p.trim()).filter(Boolean)) {
+        const [n, id] = pair.split('=').map((x) => x.trim().replace(/^@/, '').toLowerCase());
+        if (!n || !/^\d+$/.test(id ?? '')) throw new IgError('validation', `--user-id expects name=123 pairs; got "${pair}".`);
+        if (!names.includes(n)) throw new IgError('validation', `--user-id names @${n}, which is not among the requested accounts.`);
+        refs.set(n, { username: n, userId: id });
+        manual.push(n);
+    }
+    const missing = names.filter((n) => !refs.has(n));
+    if (missing.length) {
+        await withClient(async (c) => {
+            for (const n of missing) {
+                const { profile } = await getProfile(c, n);
+                refs.set(n, { username: profile.username.toLowerCase(), userId: profile.pk });
+            }
+        });
+    }
+    return { refs, manual };
+}
+
+async function runPublish(plan: PublishPlan, flags: Args['flags'], contract: ContractName, mentions: StoryMention[] = [], extras?: { tags: UserRef[]; collaborators: UserRef[]; aiLabel: boolean }, info?: { aiLabel?: boolean; manual?: string[] }): Promise<void> {
     const description = describePlan(plan);
+    const recipients = [...mentions, ...(extras?.tags ?? []), ...(extras?.collaborators ?? [])];
+    const digest = await planDigest(plan);
+    const subject = (account: string) =>
+        approvalKey({
+            digest,
+            account,
+            kind: plan.kind,
+            files: plan.items.map((it) => ({ name: it.label, bytes: it.facts.bytes })),
+            caption: plan.caption,
+            aiLabel: Boolean(info?.aiLabel || extras?.aiLabel),
+            roles: { mention: mentions, tag: extras?.tags ?? [], collab: extras?.collaborators ?? [] },
+        });
+    const needsApproval = recipients.length > 0;
+    const provenance = (u: UserRef) => ((info?.manual ?? []).includes(u.username.toLowerCase()) ? 'id supplied with --user-id, NOT verified to belong to this handle' : 'id read from the profile lookup');
     if (!flags.confirm) {
-        emit('post', { dryRun: true, note: 'Nothing was sent. Re-run with --confirm --account <username> after the user approves this exact post.', ...(await dryRunAccount(flags)), ...description });
+        const acct = await dryRunAccount(flags);
+        const who = String(str(flags.account) ?? acct.signedInAs ?? '');
+        emit('post', {
+            dryRun: true,
+            note: 'Nothing was sent. Re-run with --confirm --account <username> after the user approves this exact post.',
+            ...acct,
+            ...(recipients.length
+                ? {
+                      recipients: recipients.map((x) => ({ username: '@' + x.username, userId: x.userId, role: mentions.includes(x) ? 'story mention' : (extras?.collaborators ?? []).includes(x) ? 'collaborator invite' : 'tag', provenance: provenance(x) })),
+                      recipientsNote: 'These accounts are expected to be notified. Open instagram.com/<username> for each one and check it is the person meant.',
+                      approveWith: who ? `--approve "${subject(who)}"` : 'sign in first: the approval string includes the account',
+                      approveNote: 'The approval string covers the recipients and their roles, the account, the exact bytes of the media and cover, and every publish field (caption, AI label, feed placement...). Change any of them and it no longer matches. Reels are sent with one more field, signed_body = "SIGNATURE." + the JSON of the fields shown.',
+                  }
+                : {}),
+            ...(info?.aiLabel || extras?.aiLabel ? { aiLabel: true } : {}),
+            ...description,
+        });
         if (plan.check.errors.length) process.exitCode = 1;
         return;
     }
     requireGate(contract, flags);
+    if (needsApproval) {
+        const expected = subject(String(str(flags.account) ?? ''));
+        if (str(flags.approve) !== expected) {
+            throw new IgError('validation', `This post was not approved as it now stands (recipients, roles, account, files, caption or AI label differ, or --approve is missing). Run it without --confirm, review, and pass the --approve string it prints. Nothing was sent.`);
+        }
+    }
     if (plan.check.warnings.length) for (const w of plan.check.warnings) log(`[instagram] warning: ${w}`);
     const client = await IgClient.create({ log });
     try {
         const account = await assertAccount(client, flags);
         const result = await executePlan(client, plan, log, { ignorePending: Boolean(flags['ignore-pending']) });
-        emit('post', { posted: true, account: '@' + account, ...result });
+        // An unverified field can be accepted and silently dropped: read the story back and say what Instagram kept.
+        // One metadata read serves every check. After an account signal (429, checkpoint, action block, logged out)
+        // nothing else is requested: the post stays reported as posted and the checks as not performed.
+        let mentionCheck: Record<string, unknown> = {};
+        const wantsAi = Boolean(info?.aiLabel || extras?.aiLabel);
+        if (mentions.length || extras || wantsAi) {
+            try {
+                const { raw } = await getMedia(client, String((result as { pk?: string }).pk ?? ''));
+                if (mentions.length) mentionCheck.mentions = mentionReadBack(mentions, raw);
+                if (extras) mentionCheck.readBack = reelExtrasReadBack(extras, raw);
+                else if (wantsAi) mentionCheck.aiLabel = { ...aiLabelReadBack(raw), note: 'One metadata read after posting; check how the label shows in the app.' };
+            } catch (e) {
+                mentionCheck.readBack = {
+                    outcome: 'not_checked',
+                    stopped: isAccountSignal(e),
+                    note: `The post is live, but it could not be read back (${(e as Error).message}). No further request was made. Check mentions, tags and the AI label in the app; do not post again.`,
+                };
+            }
+        }
+        emit('post', { posted: true, account: '@' + account, ...result, ...mentionCheck });
     } finally {
         await client.flush();
     }
@@ -377,12 +478,43 @@ async function main(): Promise<void> {
                 shareToFeed: !f['no-feed'],
                 cover: str(f.cover),
                 coverAt: str(f['cover-at']) ? Number(f['cover-at']) : undefined,
+                aiLabel: Boolean(f['ai-label']),
             };
             if (!files.length) throw new IgError('validation', `Usage: post ${kind ?? '<photo|carousel|reel|story>'} <file...>`);
+            const bad = unsupportedFlags(String(kind), f as Record<string, unknown>);
+            if (bad.length) throw new IgError('validation', `${bad.map((b) => '--' + b).join(', ')} ${bad.length > 1 ? 'are' : 'is'} not supported for "post ${kind}". Nothing was sent.`);
             if (kind === 'photo') return runPublish(await planPhoto(files[0], o), f, 'photo');
             if (kind === 'carousel') return runPublish(await planCarousel(files, o), f, 'carousel');
-            if (kind === 'reel') return runPublish(await planReel(files[0], o), f, 'reel');
-            if (kind === 'story') return runPublish(await planStory(files[0], o), f, 'story');
+            if (kind === 'reel') {
+                let tagNames: string[];
+                let collabNames: string[];
+                try {
+                    tagNames = parseHandleList('tag', f.tag as string | true | undefined, REEL_TAGS_MAX);
+                    collabNames = parseHandleList('collab', f.collab as string | true | undefined, REEL_COLLABORATORS_MAX);
+                } catch (e) {
+                    throw new IgError('validation', (e as Error).message);
+                }
+                const aiLabel = Boolean(f['ai-label']);
+                if (!tagNames.length && !collabNames.length && !aiLabel) return runPublish(await planReel(files[0], o), f, 'reel');
+                const { refs, manual } = await resolveUsers([...new Set([...tagNames, ...collabNames])], str(f['user-id']));
+                const extras = { tags: tagNames.map((n) => refs.get(n)!), collaborators: collabNames.map((n) => refs.get(n)!), aiLabel };
+                return runPublish(await planReel(files[0], { ...o, ...extras }), f, collabNames.length ? 'reelCollab' : 'reelExtras', [], extras, { aiLabel, manual });
+            }
+            if (kind === 'story') {
+                let manualIds: string[] = [];
+                let names: string[];
+                try {
+                    names = parseMentionList(f.mention as string | true | undefined);
+                } catch (e) {
+                    throw new IgError('validation', (e as Error).message);
+                }
+                if (!names.length) return runPublish(await planStory(files[0], o), f, o.aiLabel ? 'storyAiLabel' : 'story', [], undefined, o.aiLabel ? { aiLabel: true } : undefined);
+                // Mentions are sent by numeric id: ids come from --user-id or one read-only lookup per handle.
+                const resolved = await resolveUsers(names, str(f['user-id']));
+                const mentions: StoryMention[] = names.map((n) => resolved.refs.get(n)!);
+                manualIds = resolved.manual;
+                return runPublish(await planStory(files[0], { ...o, mentions }), f, 'storyMention', mentions, undefined, { aiLabel: Boolean(o.aiLabel), manual: manualIds });
+            }
             throw new IgError('validation', 'post needs one of: photo, carousel, reel, story');
         }
         case 'edit-caption':
