@@ -38,13 +38,12 @@ API app, no third-party connectors.
 
 ## Status
 
-This is the single current plan. It supersedes the base plan plus "Revision 1"
-(kept for history in `docs/reviews/PLAN-r1-superseded.md`). Where the two disagreed,
+This is the single current plan. It supersedes the base plan plus "Revision 1".
+Where the two disagreed,
 for example on 429 backoff, the 30-hashtag cap, or an archive_only photo test, this
 document wins. The implementation in `skills/` matches it, and `test/unit` checks it.
 
-Review: Codex (Seldon) approved round 9 (confidence 0.91) after eight rounds of fixes; verdicts
-are in `docs/reviews/seldon-plan-r*.json`. No write has been verified on a live account yet.
+Review: Codex (Seldon) approved round 9 (confidence 0.91) after eight rounds of fixes.
 
 ## Components (as built)
 

@@ -25,8 +25,11 @@ No install step: Bun runs the TypeScript directly and the scripts have zero npm 
    account the user means, stop and have them `login --force` as the right one. `--account` is
    required with `--confirm`, and the write refuses if the session is another account.
 2. **Unverified writes need a second opt-in.** A write runs with `--confirm` alone only once its
-   contract is `verified-live` (`status` lists them). Photos, carousels, reels, stories, comments and replies are verified;
-   only edit-caption still needs `--experimental`. Tell the user the endpoint has not been proven on a real
+   contract is `verified-live` (`status` lists them). Photos, carousels, reels, stories, comments and replies are verified
+   (reels through the "comet async" form instagram.com requires since 2026-11-12; verified 2026-11-13). Reel tags
+   (`--tag`) and the AI label (`--ai-label`) are verified too (2026-11-13). Collaborator invites
+   (`--collab`), the story AI label and edit-caption still need `--experimental`. Story mentions
+   (`--mention`) were tried live and did NOT take: tell the user to add the mention in the app. Tell the user the endpoint has not been proven on a real
    account and may fail, and suggest a test account for the first try.
 3. **Stop on account signals.** On `rate_limited` (HTTP 429), `checkpoint`, `feedback_required`
    or `not_logged_in`, stop all Instagram calls and report the error's `hint`. Never retry in a
@@ -109,7 +112,7 @@ Validation before anything is uploaded:
 | Feed images | aspect 4:5 to 1.91:1; 8 MB; JPEG (other formats converted with ffmpeg) |
 | Carousel | 2 to 20 items; mixed aspect ratios are cropped to the first (warning) |
 | Reel | 3 s to 15 min; H.264/HEVC; 9:16 recommended (warning otherwise) |
-| Story | photo only in v0.1; 9:16 recommended |
+| Story | photo or video (up to 60 s); 9:16 recommended |
 
 Prefer a caption file (`--caption-file`) for anything with line breaks or quotes, to avoid shell
 quoting problems on Windows. Lint captions first with the `instagram-content` skill's

@@ -34,3 +34,7 @@ Thumbs.db
 
 # claude plugin eval output
 evals/results/
+
+# Working notes from building the skills (plans, review prompts and verdicts): kept locally
+docs/reviews/
+docs/plans/

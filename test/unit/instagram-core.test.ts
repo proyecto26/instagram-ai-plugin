@@ -316,11 +316,18 @@ describe('publish validation and plans', () => {
     test('only writes proven on a real account skip --experimental', () => {
         expect(CONTRACTS.editCaption).not.toBe('verified-live');
         expect('delete' in CONTRACTS).toBe(false);
-        expect(Object.entries(CONTRACTS).filter(([, v]) => v === 'verified-live').map(([k]) => k).sort()).toEqual(['carousel', 'comment', 'photo', 'reel', 'story']);
+        expect(Object.entries(CONTRACTS).filter(([, v]) => v === 'verified-live').map(([k]) => k).sort()).toEqual(['carousel', 'comment', 'photo', 'reel', 'reelExtras', 'story']);
+        // Collaborator invites and story mentions have never been confirmed live.
+        expect(CONTRACTS.reelCollab).toBe('observed-in-bundle');
+        expect(CONTRACTS.storyMention).toBe('unverified');
     });
 });
 
 // ---------------------------------------------------------------- pending ledger
+
+const HOME_HTML = `<html><script>[["DTSGInitialData",[],{"token":"FAKE_dtsg"},1],["LSD",[],{"token":"FAKElsd"},2],["SprinkleConfig",[],{"param_name":"jazoest","version":2,"should_randomize":false},3],["CurrentUserInitialData",[],{"USER_ID":"0"},4],["SiteData",[],{"client_revision":1,"haste_session":"h","hsi":"9","comet_env":7,"wbloks_env":false,"spin":4,"__spin_r":1,"__spin_b":"trunk","__spin_t":2},5],["InstagramWebPushInfo",[],{"rollout_hash":"1"},6]]</script></html>`;
+/** A fake instagram.com home page (GET /) so the client can read the request context reels need. */
+const isHome = (u: unknown, init?: RequestInit) => (init?.method ?? 'GET') === 'GET' && new URL(String(u)).pathname === '/';
 
 describe('pending ledger', () => {
     const realFetch = globalThis.fetch;
@@ -474,10 +481,11 @@ describe('pending ledger', () => {
 
     test.skipIf(!hasFfmpeg)('a 5xx "in progress" answer is not retried and stays pending', async () => {
         let configures = 0;
-        globalThis.fetch = (async (u: URL) => {
+        globalThis.fetch = (async (u: URL, init?: RequestInit) => {
+            if (isHome(u, init)) return new Response(HOME_HTML);
             if (String(u).includes('rupload')) return new Response('{"status":"ok","upload_id":"1"}');
             configures++;
-            return configures === 1 ? new Response('{"status":"in_progress"}', { status: 502 }) : new Response('{"media":{"pk":"1","code":"C"}}');
+            return configures === 1 ? new Response('{"status":"in_progress"}', { status: 502 }) : new Response('for (;;);{"__ar":1,"payload":{"media":{"pk":"1","code":"C"}}}');
         }) as unknown as typeof fetch;
         const c = await IgClient.create({ cookies: { ...FAKE } });
         const plan = await planReel(ffmpegVideo('t5.mp4', '1080x1920', 4), { caption: 't5', noCover: true } as any);

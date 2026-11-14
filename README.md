@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude_Code-Plugin-blueviolet)](https://code.claude.com/docs/en/plugins)
 [![Agent Plugins](https://img.shields.io/badge/Agent_Plugins-1.0-orange)](https://agent-plugins.org/specification)
-[![Skills](https://img.shields.io/badge/Skills-5-brightgreen)](#-the-essentials-kit-features)
+[![Skills](https://img.shields.io/badge/Skills-7-brightgreen)](#-the-essentials-kit-features)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Bun-blue)](https://bun.sh)
 
 <img src="https://github.com/proyecto26/sherlock-ai-plugin/blob/main/images/claude-mascot-jumping-animated.svg" width="150">
@@ -62,6 +62,17 @@ commands, by design.
 - Boosting and campaign creation stay in the Instagram app or Ads Manager, so no money moves
   through this plugin.
 
+### 🎬 **6. Instagram Video Breakdown (The Editor)**
+*Take a reel apart so you can make your own version of it.*
+- **One link in**: downloads the video through your session (or takes a local file) and measures
+  cuts, pacing, loudness and tempo with ffmpeg. No model downloads.
+- **Evidence per shot**: first and last frames, a contact sheet and a 2 fps timeline with
+  timestamps, plus hints for where on-screen text changes.
+- **Script from a transcript only**: run your own local speech model (a Whisper recipe is
+  included) or import an `.srt`. Without one, the script is reported as unconfirmed, not guessed.
+- **A remake plan**: shot list, text timeline, assets you must supply, and a route per shot
+  (film it, ComfyUI, code render, screen recording, ffmpeg). Reference only: nothing is re-uploaded.
+
 ---
 
 ## ⚠️ Read this first: account risk
@@ -72,7 +83,7 @@ Terms of Use. Instagram can rate-limit, challenge or restrict accounts it believ
 The plugin is built to stay conservative:
 
 - Every write is a **dry run** until you approve the exact post (`--confirm`). A write type that
-  has not passed a live test also needs `--experimental`. In v0.1 that is every write.
+  has not passed a live test also needs `--experimental` (`status` lists which ones have).
 - Requests are spaced at least 1.5 s apart. On HTTP 429, a checkpoint or "action blocked", the CLI
   **stops** and never retries in a loop.
 - A publish that ends without a clear answer is recorded as **pending**, and new posts are refused
@@ -91,7 +102,10 @@ Use a test account first. You are responsible for how you use your account.
 
 - Node.js (for `npx`). Bun is fetched on demand by `npx -y bun`, with zero npm dependencies.
 - Google Chrome, Chromium or Edge for `login`, or an exported cookie file.
-- ffmpeg, optional: PNG/WebP conversion and reel cover frames.
+- ffmpeg: optional for the `instagram` skill (PNG/WebP conversion, reel cover frames); required, with
+  ffprobe, by `instagram-video-breakdown` and `instagram-video-remake`.
+- For `instagram-video-remake` only: a local ComfyUI with MiniMax H3 (about 45 GB of models, a GPU
+  with 24 GB or more). `doctor` lists what is missing; nothing is downloaded without asking.
 
 ### Standards
 
@@ -137,7 +151,7 @@ npx skills add proyecto26/instagram-ai-plugin --list
 | **GitHub Copilot CLI** | `copilot plugin marketplace add proyecto26/instagram-ai-plugin` then `copilot plugin install instagram-ai-plugin@instagram-ai-plugin-marketplace` |
 | **Cursor** | Settings → Plugins → install from Git URL `https://github.com/proyecto26/instagram-ai-plugin` |
 
-All five skills are discovered from `skills/`, so adding a skill is a one-directory change.
+All six skills are discovered from `skills/`, so adding a skill is a one-directory change.
 
 #### Option 4: Clone and Copy
 
@@ -228,7 +242,9 @@ instagram-ai-plugin/
 │   ├── instagram-content/       # Content workflows + offline linters (scripts/)
 │   ├── instagram-audit/         # Account audit
 │   ├── instagram-research/      # Competitor swipe files
-│   └── instagram-ads/           # Meta Ads decisions
+│   ├── instagram-ads/           # Meta Ads decisions
+│   ├── instagram-video-breakdown/ # Reel -> shots, script, remake plan (scripts/, needs ffmpeg)
+│   └── instagram-video-remake/    # Replace a person in a video with a local model (scripts/, assets/)
 ├── evals/                       # `claude plugin eval .` suite
 ├── test/                        # Offline unit tests and opt-in live tests
 └── scripts/check-manifests.sh   # Checks the manifests agree before a release

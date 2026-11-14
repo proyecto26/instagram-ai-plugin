@@ -1,3 +1,4 @@
+import { type WebContext, cometForm, cometHeaders, decodeComet, extractWebContext, hasCreationEvidence, newWebSessionId } from './comet.ts';
 import { mkdir, readFile, writeFile, appendFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -44,7 +45,7 @@ const FALLTHROUGH: IgErrorKind[] = ['not_found', 'unexpected_response'];
 const HINTS: Record<IgErrorKind, string> = {
     not_logged_in: 'Session expired or missing. Run: npx -y bun scripts/main.ts login --force (or import-cookies).',
     checkpoint: 'Instagram wants a security check. Open instagram.com in a browser, complete it, then run login --force.',
-    rate_limited: 'Instagram answered HTTP 429 on this endpoint. Some endpoints always answer 429 to web sessions, so this does not by itself mean the account is limited. Do not retry in a loop; check `whoami`, and if the whole session is limited, wait 15-30 minutes.',
+    rate_limited: 'Instagram answered HTTP 429 on this endpoint. Some endpoints always answer 429 to web sessions, so this does not by itself mean the account is limited. Stop here: make no further requests in this run and do not retry in a loop. Try again after 15-30 minutes.',
     feedback_required: 'Instagram blocked the action ("feedback_required"/"Try Again Later"). Stop writes for 24h and use the app manually.',
     not_found: 'Endpoint or object not found. If it is an endpoint, Instagram moved it: run `probe` and update scripts/endpoints.ts.',
     bad_request: 'Instagram rejected the request payload. The body shape may have changed; compare with the web client (see README).',
@@ -96,6 +97,10 @@ export interface RequestOptions {
     /** Expect JSON (default true). */
     expectJson?: boolean;
     referer?: string;
+    /** Treat HTTP 202 as "still processing" (configure_to_clips: the web client repeats the same request). */
+    pendingOn202?: boolean;
+    /** Filled in by request(): HTTP status and size of the answer. `text` is only ever a fixed label, never response text. */
+    meta?: { status?: number; bytes?: number; text?: string };
 }
 
 /** A logical operation tried against an ordered list of candidate endpoints. */
@@ -146,6 +151,70 @@ export function extractRuntimeConfig(html: string): Partial<RuntimeConfig> {
 }
 
 /** Maps an Instagram JSON body to an error kind (or null when it is a success). */
+/**
+ * Instagram's own error sentence, made safe to show and store: one line, at most 160 characters, with anything
+ * that looks like a token, id or URL removed. The sentence is useful ("media not found"); a value inside it is not.
+ */
+export function safeServerText(v: unknown): string {
+    if (typeof v !== 'string') return '';
+    return v
+        .replace(/[\r\n\t]+/g, ' ')
+        .replace(/https?:\/\/\S+/gi, '<url>')
+        .replace(/[A-Za-z0-9_\-:%.=+\/]{20,}/g, '<redacted>')
+        .replace(/\d{9,}/g, '<number>')
+        .trim()
+        .slice(0, 160);
+}
+
+/** A redirect target described by a fixed label. Nothing from the Location header itself is ever repeated. */
+export function safeLocation(loc: string): string {
+    try {
+        const u = new URL(loc, IG_ORIGIN);
+        if (/^\/accounts\/login/.test(u.pathname)) return 'the login page';
+        if (/^\/(challenge|checkpoint)(\/|$)/.test(u.pathname)) return 'a security check page';
+        return u.origin === IG_ORIGIN ? 'another instagram.com page' : 'another site';
+    } catch {
+        return 'an unreadable location';
+    }
+}
+
+const ACCOUNT_SIGNALS: IgErrorKind[] = ['rate_limited', 'checkpoint', 'feedback_required', 'not_logged_in'];
+
+/**
+ * Publish answers can carry per-item results in medias[] / posts[]. Every ERROR entry is inspected with its whole
+ * error_info (so flags such as require_login or checkpoint_url are kept): an account signal in any of them wins;
+ * otherwise an ERROR entry is a terminal bad request, never "still processing". Null when there is no ERROR entry.
+ */
+export function nestedErrorKind(status: number, data: any): IgErrorKind | null {
+    let found: IgErrorKind | null = null;
+    for (const list of [data?.medias, data?.posts]) {
+        if (!Array.isArray(list)) continue;
+        for (const e of list) {
+            if (typeof e?.status !== 'string' || e.status.toLowerCase() !== 'error') continue;
+            const info = e.error_info && typeof e.error_info === 'object' ? e.error_info : e;
+            const k = classifyBody(status, { ...info, status: undefined, message: info.message ?? info.error_type });
+            if (k && ACCOUNT_SIGNALS.includes(k)) return k;
+            found = found ?? (k && k !== 'transcode_pending' ? k : 'bad_request');
+        }
+    }
+    return found;
+}
+
+/**
+ * How one JSON answer is classified. Order: an account signal anywhere (top level or nested) stops everything;
+ * then any other top-level error; then a nested ERROR entry; and only when none of those apply may the answer
+ * count as "still processing" (a top-level in-progress body, or a clean 202 where the caller asked for that).
+ */
+export function resolveKind(status: number, data: any, pendingOn202: boolean): IgErrorKind | null {
+    const top = classifyBody(status, data);
+    const nested = nestedErrorKind(status, data);
+    if (top && ACCOUNT_SIGNALS.includes(top)) return top;
+    if (nested && ACCOUNT_SIGNALS.includes(nested)) return nested;
+    if (top && top !== 'transcode_pending') return top;
+    if (nested) return nested;
+    return top ?? (pendingOn202 && status === 202 ? 'transcode_pending' : null);
+}
+
 export function classifyBody(status: number, data: any): IgErrorKind | null {
     const msg = String(data?.message ?? '').toLowerCase();
     const errType = String(data?.error_type ?? '').toLowerCase();
@@ -248,13 +317,33 @@ export class IgClient {
 
         if (res.status >= 300 && res.status < 400) {
             const loc = res.headers.get('location') ?? '';
+            if (options.meta) {
+                // A redirect is thrown before the body is parsed: keep its status, size and target as evidence.
+                const redirectBody = await res.text().catch(() => '');
+                options.meta.status = res.status;
+                options.meta.bytes = Buffer.byteLength(redirectBody, 'utf8');
+                options.meta.text = `redirect to ${safeLocation(loc)}`;
+            }
             if (/accounts\/login/.test(loc)) throw new IgError('not_logged_in', `Redirected to login from ${u.pathname}.`, { status: res.status, endpoint: u.pathname });
             if (/challenge|checkpoint/.test(loc)) throw new IgError('checkpoint', `Redirected to a checkpoint from ${u.pathname}.`, { status: res.status, endpoint: u.pathname });
-            throw new IgError('unexpected_response', `Unexpected redirect (${res.status}) from ${u.pathname} to ${loc}.`, { status: res.status, endpoint: u.pathname });
+            throw new IgError('unexpected_response', `Unexpected redirect (${res.status}) from ${u.pathname} to ${safeLocation(loc)}.`, { status: res.status, endpoint: u.pathname });
         }
 
         const text = await res.text();
+        // Diagnostics first, before any parsing can throw: status, UTF-8 size and the start of the body.
+        if (options.meta) {
+            options.meta.status = res.status;
+            options.meta.bytes = Buffer.byteLength(text, 'utf8');
+        }
         if (options.expectJson === false) {
+            // The signed-in home page carries the request context some writes need; keep it in memory when it parses.
+            if (method === 'GET' && res.ok && u.origin === IG_ORIGIN && u.pathname === '/') {
+                try {
+                    this.webCtx = extractWebContext(text);
+                } catch {
+                    this.webCtx = null;
+                }
+            }
             // Account signals first, whatever the status: a 403 challenge page is a checkpoint, not a bad request.
             if ((res.ok ? CHALLENGE_PAGE_STRONG : CHALLENGE_HTML).test(text)) throw new IgError('checkpoint', `${u.pathname} served a security-check page.`, { status: res.status, endpoint: u.pathname });
             if (LOGIN_HTML.test(text)) throw new IgError('not_logged_in', `${u.pathname} served the login page.`, { status: res.status, endpoint: u.pathname });
@@ -287,9 +376,9 @@ export class IgClient {
             throw new IgError(kind, `Non-JSON response (${res.status}) from ${u.pathname}.`, { status: res.status, endpoint: u.pathname });
         }
 
-        const kind = classifyBody(res.status, data);
+        const kind = resolveKind(res.status, data, Boolean(options.pendingOn202));
         if (kind) {
-            const message = data?.message || data?.error_title || `HTTP ${res.status}`;
+            const message = safeServerText(data?.message || data?.error_title) || `HTTP ${res.status}`;
             throw new IgError(kind, `${u.pathname}: ${message}`, { status: res.status, endpoint: u.pathname, body: data });
         }
         return data as T;
@@ -326,6 +415,84 @@ export class IgClient {
         throw new IgError('not_found', `${op}: no endpoint answered.\n  ${failures.join('\n  ')}`, {
             hint: 'Every known endpoint for this operation failed. Run `probe`, then update scripts/endpoints.ts.',
         });
+    }
+
+    /** In-memory only: never written to disk, never returned by a command. */
+    private webCtx: WebContext | null = null;
+    private readonly webSessionId = newWebSessionId();
+    private cometReq = 0;
+
+    /** Which transport the current web client uses for stories / carousels on this session (null = unknown). */
+    webGates(): { storyComet: boolean | null; sidecarComet: boolean | null } | null {
+        return this.webCtx ? this.webCtx.gates : null;
+    }
+
+    /**
+     * Makes sure the page context for comet writes is loaded and fresh (15 minutes). One GET of the home page when
+     * it is not. Throws before any upload when the page does not carry the expected context: nothing is guessed.
+     */
+    async ensureWebContext(): Promise<void> {
+        if (this.webCtx && Date.now() - this.webCtx.fetchedAt < 15 * 60_000) return;
+        const html = await this.request<string>('GET', IG_URL, {
+            expectJson: false,
+            headers: { Accept: 'text/html,application/xhtml+xml', 'Sec-Fetch-Mode': 'navigate', 'Sec-Fetch-Dest': 'document' },
+        });
+        if (!this.webCtx) {
+            let why = 'unknown reason';
+            try {
+                extractWebContext(html);
+            } catch (e) {
+                why = (e as Error).message;
+            }
+            throw new IgError('unexpected_response', `Cannot prepare the publish request: ${why}`, {
+                hint: 'Nothing was uploaded or sent. instagram.com may have changed its page; publish from the app and report this.',
+            });
+        }
+    }
+
+    /**
+     * A comet async POST (see comet.ts). Returns the payload on success. Throws:
+     *  - transcode_pending (status 202, body = payload) when payload.statusCode is 202: repeat the same request;
+     *  - an account signal when one is anywhere in the answer;
+     *  - unexpected_response for an empty body, a non-envelope answer or an envelope error. Those carry NO body,
+     *    so the caller keeps the publish unresolved instead of assuming nothing was created.
+     * `meta` receives the HTTP status, size and an allow-listed summary (never raw text: answers can carry tokens).
+     */
+    async cometPost(url: string, fields: Record<string, unknown>, meta: { status?: number; bytes?: number; text?: string } = {}): Promise<any> {
+        await this.ensureWebContext();
+        const ctx = this.webCtx!;
+        const u = new URL(url);
+        if (u.origin !== IG_ORIGIN) throw new IgError('validation', `Comet requests are only sent to ${IG_ORIGIN}.`);
+        const form = cometForm(fields, ctx, ++this.cometReq, this.webSessionId);
+        const raw: { status?: number; bytes?: number; text?: string } = {};
+        const text = await this.request<string>('POST', url, { form, expectJson: false, headers: cometHeaders(ctx, this.webSessionId), meta: raw });
+        const answer = decodeComet(typeof text === 'string' ? text : '');
+        meta.status = raw.status;
+        meta.bytes = raw.bytes;
+        // Every error below has a fixed message and NO body: nothing the server wrote is repeated (an answer can
+        // carry tokens), and without a body the publish is never treated as a definitive "not posted".
+        const where = { status: raw.status, endpoint: u.pathname };
+        const fail = (kind: IgErrorKind, text: string): never => {
+            throw new IgError(kind, `${u.pathname}: ${text}`, where);
+        };
+        if (answer.kind === 'empty') {
+            meta.text = 'empty body';
+            return fail('unexpected_response', `HTTP ${raw.status} with an empty body: the request shape was probably not accepted.`);
+        }
+        meta.text = answer.summary;
+        if (answer.kind === 'not_envelope') return fail('unexpected_response', `the answer was not the expected envelope (${answer.summary}).`);
+        if (answer.signal) return fail(answer.signal, `the answer carried an account signal (${answer.signal}). No further request was made.`);
+        if (answer.kind === 'error') return fail('unexpected_response', `the server reported ${answer.summary}.`);
+        const p = answer.payload;
+        const hasMedia = hasCreationEvidence(p);
+        const errorEntry = [p.medias, p.posts].some((l) => Array.isArray(l) && l.some((e: any) => typeof e?.status === 'string' && e.status.toLowerCase() === 'error'));
+        const failed = errorEntry || (typeof p.status === 'string' && p.status.toLowerCase() === 'fail') || (answer.statusCode !== null && answer.statusCode >= 400);
+        if (failed) return fail('unexpected_response', `the server reported a failure (${answer.summary}).`);
+        // "Still processing" is exactly payload.statusCode 202 with no media and no error; only that repeats.
+        if (answer.statusCode === 202 && !hasMedia) {
+            throw new IgError('transcode_pending', `${u.pathname}: still processing.`, { status: 202, endpoint: u.pathname, body: { statusCode: 202 } });
+        }
+        return p;
     }
 
     /** Fetches the instagram.com home page to refresh app id / ASBD id and confirm the session. */
