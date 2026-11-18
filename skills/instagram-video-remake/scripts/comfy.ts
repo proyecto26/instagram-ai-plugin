@@ -32,7 +32,23 @@ export function checkComfyUrl(url: string, allowRemote: boolean): URL {
     if (!local && !allowRemote) {
         throw new ComfyError(`${u.host} is not this computer. The identity photo and the video would leave it; pass --allow-remote-comfy only if the person in them agreed to that.`, 'config');
     }
+    // Local-only: the flag reaches the owner's own machines, never an internet host or a hosted service.
+    if (!local && !isPrivateHost(u.hostname)) {
+        throw new ComfyError(`${u.host} is not on a private network. This skill only talks to a ComfyUI on this computer or on your own network (10.x, 172.16-31.x, 192.168.x, *.local).`, 'config');
+    }
     return u;
+}
+
+/** A literal private, link-local or unique-local address, or a LAN name (*.local, *.lan, *.home.arpa, or one label). */
+export function isPrivateHost(hostname: string): boolean {
+    const h = hostname.replace(/^\[|\]$/g, '').toLowerCase();
+    const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+    if (v4) {
+        const [a, b] = [Number(v4[1]), Number(v4[2])];
+        return a === 10 || a === 127 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254);
+    }
+    if (h.includes(':')) return h === '::1' || /^f[cd][0-9a-f]{0,2}:/.test(h) || /^fe[89ab][0-9a-f]?:/.test(h);
+    return /\.(local|lan|home\.arpa)$/.test(h) || !h.includes('.');
 }
 
 export function graphHash(graph: Graph): string {

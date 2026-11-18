@@ -199,6 +199,9 @@ describe('remake ComfyUI client', () => {
         expect(checkComfyUrl('http://localhost:8189/', false).hostname).toBe('localhost');
         expect(() => checkComfyUrl('http://192.168.1.20:8188', false)).toThrow(/not this computer/);
         expect(checkComfyUrl('http://192.168.1.20:8188', true).hostname).toBe('192.168.1.20');
+        // Local-only: even with the flag, only this machine or the owner's private network.
+        for (const ok of ['http://10.0.0.5:8188', 'http://172.16.3.4:8188', 'http://gpu-box.local:8188', 'http://[fd00::5]:8188', 'http://169.254.1.2:8188']) expect(checkComfyUrl(ok, true).port).toBe('8188');
+        for (const bad of ['https://cloud.comfy.org', 'http://8.8.8.8:8188', 'http://172.32.0.1:8188', 'https://my-comfy.example.com']) expect(() => checkComfyUrl(bad, true)).toThrow(/private network/);
         expect(() => checkComfyUrl('ftp://x', false)).toThrow();
         expect(() => checkComfyUrl('nonsense', false)).toThrow();
     });

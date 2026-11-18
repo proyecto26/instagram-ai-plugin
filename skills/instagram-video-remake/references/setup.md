@@ -9,7 +9,8 @@ what is needed, how large it is and where it comes from, and install only after 
 - ComfyUI 0.41.0 or newer (it ships the MiniMax H3, SAM 3.1 and video nodes), running on this
   computer. The skill talks to `http://127.0.0.1:8188` unless `--comfy-url` or
   `COMFY_LOCAL_URL` says otherwise, and refuses a non-local address without
-  `--allow-remote-comfy`: the files sent are someone's likeness. Redirects are refused.
+  `--allow-remote-comfy`, and even then only an address on your own network (10.x, 172.16-31.x, 192.168.x,
+  *.local): the files sent are someone's likeness. Internet hosts and hosted services are refused, and so are redirects.
 - ffmpeg with ffprobe on PATH (libx264 and AAC encoders).
 
 ## The node pack (one, GPL-3.0, not bundled)
