@@ -1,8 +1,9 @@
 # Recreate routes
 
 `recreate.md` assigns each shot a route from its type. This file is how to carry a route out.
-Routes are recommendations: never submit a paid generation, start a long render or install
-anything without the user agreeing first.
+Routes are recommendations: never start a long render, download a model or install anything
+without the user agreeing first. Every route is local: the user's own footage, ffmpeg, a local
+ComfyUI install, or another tool on their machine. Nothing here sends media to an outside service.
 
 The source frames are for composition, timing and style reference. Make new pictures; do not put
 the source's frames or audio into the new video.
@@ -12,7 +13,7 @@ the source's frames or audio into the new video.
 | Tool | Needed for | If missing |
 |---|---|---|
 | `ffmpeg`, `ffprobe` | The breakdown itself, stills, pan/zoom, assembly, loudness | Stop: Windows `winget install Gyan.FFmpeg`, macOS `brew install ffmpeg`, Linux `sudo apt install ffmpeg` |
-| `comfy` (ComfyUI CLI) | The generate routes | Optional: `pip install comfy-cli`, then `comfy install` for local or `comfy cloud login` for cloud. Or the user generates in another tool |
+| `comfy` (ComfyUI CLI) | The generate routes | Optional: `pip install comfy-cli`, then `comfy install` (a local install). Or the user generates in another local tool |
 | A speech recogniser | The script | Optional: `references/transcription.md` |
 
 ## Routes
@@ -27,16 +28,18 @@ The original clip cannot be reused. Options: the user's own footage, licensed st
 the beat with a `filmed` or generated shot that plays the same role.
 
 ### `ai_video`, and `avatar` without a camera: generate
-With ComfyUI (when the `comfy` skill is installed, load it; it covers discovery and running):
+With a local ComfyUI install (when the `comfy` skill is installed, load it; it covers discovery and running,
+and always pass `--where local`):
 
 1. Make a start image of the user's own subject in the same composition (text-to-image or an
    edit of the user's photo). Never feed the source frame as the start image.
 2. Image-to-video for the shot's duration. Motion prompt = how the scene moves, taken from
    `camera` and `description`, not what is in it.
 3. Find what this install offers before choosing a model:
-   `comfy --json templates ls --type video` and `comfy --json nodes ls --produces VIDEO`.
-4. Paid partner nodes spend credits: state the cost question and get a yes before
-   `--allow-spend`.
+   `comfy --json --where local templates ls --type video` and
+   `comfy --json --where local nodes ls --produces VIDEO`.
+4. Use only open-weights models on this machine. Skip any node marked `is_api_node: true` (it calls an
+   outside service). Ask before downloading a model, with its size.
 
 Generated clips come back off-spec. Probe each one and trim/scale to the shot length and
 1080x1920 before assembly.

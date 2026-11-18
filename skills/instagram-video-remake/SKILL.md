@@ -1,6 +1,6 @@
 ---
 name: instagram-video-remake
-description: This skill should be used when the user asks to "remake this reel with another person", "replace the woman/man in this video", "swap the person in a clip", "put me (or someone) in this video", "recreate this video with a different character", "extend / continue this shot", or wants a new video that keeps the performance, camera, scene and bystanders of an existing one while changing who appears. Runs MiniMax H3 character swap and shot continuation in a local ComfyUI, puts the result back over the original, joins the timeline and keeps the music continuous. Local and free: no paid service, nothing published.
+description: This skill should be used when the user asks to "remake this reel with another person", "replace the woman/man in this video", "swap the person in a clip", "put me (or someone) in this video", "recreate this video with a different character", "extend / continue this shot", or wants a new video that keeps the performance, camera, scene and bystanders of an existing one while changing who appears. Runs MiniMax H3 character swap and shot continuation in a local ComfyUI, puts the result back over the original, joins the timeline and keeps the music continuous. Local and free, with no paid service, nothing published.
 version: 0.1.0
 ---
 
